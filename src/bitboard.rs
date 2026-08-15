@@ -38,12 +38,13 @@ impl Bitboard {
         self.0.count_ones()
     }
 
+    // Clear and return the least significant bit
     pub fn pop_lsb(&mut self) -> Option<u8> {
         if self.0 == 0 {
             None
         } else {
             let lsb_index: u8 = self.0.trailing_zeros() as u8;
-            self.0 &= self.0 - 1; // Clear the least significant bit
+            self.0 &= self.0 - 1;
             Some(lsb_index)
         }
     }
