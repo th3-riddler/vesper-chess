@@ -1,3 +1,5 @@
+use velvet::attacks::Tables;
+
 fn main() {
-    println!("Hello, world!");
+    let tables = Tables::new();
 }
