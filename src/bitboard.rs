@@ -19,6 +19,20 @@ impl Color {
 #[repr(u8)]
 pub enum PieceType { Pawn, Knight, Bishop, Rook, Queen, King }
 
+impl PieceType {
+    pub fn from_usize(i: usize) -> PieceType {
+        match i {
+            0 => PieceType::Pawn,
+            1 => PieceType::Knight,
+            2 => PieceType::Bishop,
+            3 => PieceType::Rook,
+            4 => PieceType::Queen,
+            5 => PieceType::King,
+            _ => panic!("Invalid piece type index"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Bitboard (pub u64);
 

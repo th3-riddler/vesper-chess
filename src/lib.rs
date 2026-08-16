@@ -7,4 +7,4 @@ pub mod zobrist;
 pub mod evaluation;
 pub mod uci;
 
-mod perft;
+pub mod perft;

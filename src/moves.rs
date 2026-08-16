@@ -3,6 +3,19 @@ use crate::{attacks::Tables, bitboard::{Bitboard, Color, PieceType}, board::Boar
 #[derive(Copy, Clone, Eq, Hash, PartialEq, Debug)]
 pub struct Move(u16);
 
+impl Move {
+    pub const NULL: Self = Self(0);
+
+    pub const fn new(from: u8, to: u8, flag: MoveFlag) -> Self {
+        Self((from as u16) | (to as u16) << 6 | (flag as u16) << 12)
+    }
+
+    pub const fn from(self) -> u8 { (self.0 & 0x3F) as u8 }
+    pub const fn to(self) -> u8 { ((self.0 >> 6) & 0x3F) as u8 }
+    pub fn flag(self) -> MoveFlag { MoveFlag::from_bits(((self.0 >> 12) & 0x0F) as u8) }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u8)]
 pub enum MoveFlag {
     Quiet               = 0b0000,
@@ -25,18 +38,9 @@ pub enum MoveFlag {
     PromotionCaptureQ   = 0b1111,
 }
 
-impl Move {
-    pub const NULL: Self = Self(0);
-
-    pub const fn new(from: u8, to: u8, flag: MoveFlag) -> Self {
-        Self(from as u16 | (to as u16) << 6 | (flag as u16) << 12)
-    }
-
-    pub const fn get_from(self) -> u8 { (self.0 & 0x3F) as u8 }
-    pub const fn get_to(self) -> u8 { ((self.0 >> 6) & 0x3F) as u8 }
-
-    pub const fn get_flag(self) -> MoveFlag { 
-        match (self.0 >> 12) & 0x0F {
+impl MoveFlag {
+    pub fn from_bits(bits: u8) -> MoveFlag {
+        match bits {
             0b0000 => MoveFlag::Quiet,
             0b0001 => MoveFlag::DoublePush,
             0b0010 => MoveFlag::KingSideCastle,
@@ -54,6 +58,42 @@ impl Move {
             _      => unreachable!(),
         }
     }
+    pub fn is_capture(self) -> bool {
+        matches!(self, MoveFlag::Capture | MoveFlag::EnPassant |
+                       MoveFlag::PromotionCaptureN | MoveFlag::PromotionCaptureB |
+                       MoveFlag::PromotionCaptureR | MoveFlag::PromotionCaptureQ)
+    }
+
+    pub fn promotion_piece(self) -> Option<PieceType> {
+        use MoveFlag::*;
+        match self {
+            PromotionN | PromotionCaptureN => Some(PieceType::Knight),
+            PromotionB | PromotionCaptureB => Some(PieceType::Bishop),
+            PromotionR | PromotionCaptureR => Some(PieceType::Rook),
+            PromotionQ | PromotionCaptureQ => Some(PieceType::Queen),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct UndoInfo {
+    piece: PieceType,
+    captured: Option<PieceType>,
+    castling_rights: u8,
+    en_passant: Option<u8>,
+    halfmove_clock: u16,
+}
+
+impl UndoInfo {
+    pub fn new(piece: PieceType, captured: Option<PieceType>, castling_rights: u8, en_passant: Option<u8>, halfmove_clock: u16) -> Self {
+        Self { piece, captured, castling_rights, en_passant, halfmove_clock }
+    }
+    pub fn piece(&self) -> PieceType { self.piece }
+    pub fn captured(&self) -> Option<PieceType> { self.captured }
+    pub fn castling_rights(&self) -> u8 { self.castling_rights }
+    pub fn en_passant(&self) -> Option<u8> { self.en_passant }
+    pub fn halfmove_clock(&self) -> u16 { self.halfmove_clock }
 }
 
 fn generate_pawn_moves(board: &Board, tables: &Tables, moves: &mut Vec<Move>) {
@@ -132,10 +172,11 @@ fn is_square_attacked(square: u8, by: Color, board: &Board, tables: &Tables) -> 
 fn generate_knight_moves(board: &Board, tables: &Tables, moves: &mut Vec<Move>) {
     let stm: Color = board.side_to_move;
     let mut knights: Bitboard = board.pieces[stm as usize][PieceType::Knight as usize];
+    let own = board.occupancy(stm);
     let enemy: Bitboard = board.occupancy(stm.opposite());
 
     while let Some(from) = knights.pop_lsb() {
-        let mut targets = tables.get_knight_attacks(from as u8) & enemy;
+        let mut targets = tables.get_knight_attacks(from as u8) & !own;
         while let Some(to) = targets.pop_lsb() {
             let flag = if enemy.is_set(to) { MoveFlag::Capture } else { MoveFlag::Quiet };
             moves.push(Move::new(from, to, flag));
@@ -146,19 +187,46 @@ fn generate_knight_moves(board: &Board, tables: &Tables, moves: &mut Vec<Move>) 
 fn generate_king_moves(board: &Board, tables: &Tables, moves: &mut Vec<Move>) {
     let stm: Color = board.side_to_move;
     let mut kings: Bitboard = board.pieces[stm as usize][PieceType::King as usize];
+    let own = board.occupancy(stm);
     let enemy: Bitboard = board.occupancy(stm.opposite());
-
+    
     while let Some(from) = kings.pop_lsb() {
-        let mut targets: Bitboard = tables.get_king_attacks(from as u8) & enemy;
+        let mut targets: Bitboard = tables.get_king_attacks(from as u8) & !own;
         while let Some(to) = targets.pop_lsb() {
             let flag: MoveFlag = if enemy.is_set(to) { MoveFlag::Capture } else { MoveFlag::Quiet };
             moves.push(Move::new(from, to, flag));
         }
     }
-
-    let occupied = board.all_occupancy();
     
     // Kingside castle
+    // let (right_bit, king_from, empty_mask, safe_squares) = match stm {
+    //     Color::White => (0b0001u8, 4u8, (1u64 << 5) | (1u64 << 6), [5u8, 6u8]),
+    //     Color::Black => (0b0100u8, 60u8, (1u64 << 61) | (1u64 << 62), [61u8, 62u8]),
+    // };
+    // if board.castling_rights & right_bit == 0 { return; }
+    // if occupied.0 & empty_mask != 0 { return; }
+    // if is_square_attacked(king_from, stm.opposite(), board, tables) { return; }
+    // if safe_squares.iter().any(|&sq| is_square_attacked(sq, stm.opposite(), board, tables)) { return; }
+    // moves.push(Move::new(king_from, king_from + 2, MoveFlag::KingSideCastle));
+    _add_castle_kingside(board, tables, moves);
+    _add_castle_queenside(board, tables, moves);
+
+    // Queenside castle
+    // let (right_bit, king_from, empty_mask, safe_squares) = match stm {
+    //     Color::White => (0b0010u8, 4u8, (1u64 << 3) | (1u64 << 2) | (1u64 << 1), [3u8, 2u8]),
+    //     Color::Black => (0b1000u8, 60u8, (1u64 << 59) | (1u64 << 58) | (1u64 << 57), [59u8, 58u8]),
+    // };
+    // if board.castling_rights & right_bit == 0 { return; }
+    // if occupied.0 & empty_mask != 0 { return; }
+    // if is_square_attacked(king_from, stm.opposite(), board, tables) { return; }
+    // if safe_squares.iter().any(|&sq| is_square_attacked(sq, stm.opposite(), board, tables)) { return; }
+    // moves.push(Move::new(king_from, king_from - 2, MoveFlag::QueenSideCastle));
+}
+
+fn _add_castle_kingside(board: &Board, tables: &Tables, moves: &mut Vec<Move>) {
+    let stm: Color = board.side_to_move;
+    let occupied: Bitboard = board.all_occupancy();
+
     let (right_bit, king_from, empty_mask, safe_squares) = match stm {
         Color::White => (0b0001u8, 4u8, (1u64 << 5) | (1u64 << 6), [5u8, 6u8]),
         Color::Black => (0b0100u8, 60u8, (1u64 << 61) | (1u64 << 62), [61u8, 62u8]),
@@ -168,8 +236,12 @@ fn generate_king_moves(board: &Board, tables: &Tables, moves: &mut Vec<Move>) {
     if is_square_attacked(king_from, stm.opposite(), board, tables) { return; }
     if safe_squares.iter().any(|&sq| is_square_attacked(sq, stm.opposite(), board, tables)) { return; }
     moves.push(Move::new(king_from, king_from + 2, MoveFlag::KingSideCastle));
+}
 
-    // Queenside castle
+fn _add_castle_queenside(board: &Board, tables: &Tables, moves: &mut Vec<Move>) {
+    let stm: Color = board.side_to_move;
+    let occupied: Bitboard = board.all_occupancy();
+
     let (right_bit, king_from, empty_mask, safe_squares) = match stm {
         Color::White => (0b0010u8, 4u8, (1u64 << 3) | (1u64 << 2) | (1u64 << 1), [3u8, 2u8]),
         Color::Black => (0b1000u8, 60u8, (1u64 << 59) | (1u64 << 58) | (1u64 << 57), [59u8, 58u8]),
@@ -181,13 +253,15 @@ fn generate_king_moves(board: &Board, tables: &Tables, moves: &mut Vec<Move>) {
     moves.push(Move::new(king_from, king_from - 2, MoveFlag::QueenSideCastle));
 }
 
+
 fn generate_rook_moves(board: &Board, tables: &Tables, moves: &mut Vec<Move>) {
     let stm: Color = board.side_to_move;
     let mut rooks: Bitboard = board.pieces[stm as usize][PieceType::Rook as usize];
+    let own = board.occupancy(stm);
     let enemy: Bitboard = board.occupancy(stm.opposite());
 
     while let Some(from) = rooks.pop_lsb() {
-        let mut targets: Bitboard = tables.get_rook_attacks(from, board.all_occupancy()) & enemy;
+        let mut targets: Bitboard = tables.get_rook_attacks(from, board.all_occupancy()) & !own;
         while let Some(to) = targets.pop_lsb() {
             let flag: MoveFlag = if enemy.is_set(to) { MoveFlag::Capture } else { MoveFlag::Quiet };
             moves.push(Move::new(from, to, flag));
@@ -198,10 +272,11 @@ fn generate_rook_moves(board: &Board, tables: &Tables, moves: &mut Vec<Move>) {
 fn generate_bishop_moves(board: &Board, tables: &Tables, moves: &mut Vec<Move>) {
     let stm: Color = board.side_to_move;
     let mut bishops: Bitboard = board.pieces[stm as usize][PieceType::Bishop as usize];
+    let own = board.occupancy(stm);
     let enemy: Bitboard = board.occupancy(stm.opposite());
 
     while let Some(from) = bishops.pop_lsb() {
-        let mut targets: Bitboard = tables.get_bishop_attacks(from, board.all_occupancy()) & enemy;
+        let mut targets: Bitboard = tables.get_bishop_attacks(from, board.all_occupancy()) & !own;
         while let Some(to) = targets.pop_lsb() {
             let flag: MoveFlag = if enemy.is_set(to) { MoveFlag::Capture } else { MoveFlag::Quiet };
             moves.push(Move::new(from, to, flag));
@@ -212,13 +287,40 @@ fn generate_bishop_moves(board: &Board, tables: &Tables, moves: &mut Vec<Move>) 
 fn generate_queen_moves(board: &Board, tables: &Tables, moves: &mut Vec<Move>) {
     let stm: Color = board.side_to_move;
     let mut queens: Bitboard = board.pieces[stm as usize][PieceType::Queen as usize];
+    let own = board.occupancy(stm);
     let enemy: Bitboard = board.occupancy(stm.opposite());
 
     while let Some(from) = queens.pop_lsb() {
-        let mut targets: Bitboard = tables.get_queen_attacks(from, board.all_occupancy()) & enemy;
+        let mut targets: Bitboard = tables.get_queen_attacks(from, board.all_occupancy()) & !own;
         while let Some(to) = targets.pop_lsb() {
             let flag: MoveFlag = if enemy.is_set(to) { MoveFlag::Capture } else { MoveFlag::Quiet };
             moves.push(Move::new(from, to, flag));
         }
     }
+}
+
+pub fn generate_legal_moves(board: &mut Board, tables: &Tables) -> Vec<Move> {
+    let stm: Color = board.side_to_move;
+    _generate_pseudo_legal_moves(board, tables)
+        .into_iter()
+        .filter(|&mv| {
+            let undo: UndoInfo = board.make_move(mv);
+            let king_sq: u8 = board.pieces[stm as usize][PieceType::King as usize].0.trailing_zeros() as u8;
+            let legal: bool = !is_square_attacked(king_sq, stm.opposite(), board, tables);
+            board.unmake_move(mv, undo);
+
+            legal
+        }).collect()
+}
+
+fn _generate_pseudo_legal_moves(board: &mut Board, tables: &Tables) -> Vec<Move> {
+    let mut pseudo_moves: Vec<Move> = Vec::new();
+    generate_knight_moves(board, tables, &mut pseudo_moves);
+    generate_king_moves(board, tables, &mut pseudo_moves);
+    generate_pawn_moves(board, tables, &mut pseudo_moves);
+    generate_bishop_moves(board, tables, &mut pseudo_moves);
+    generate_rook_moves(board, tables, &mut pseudo_moves);
+    generate_queen_moves(board, tables, &mut pseudo_moves);
+
+    pseudo_moves
 }

@@ -1,3 +1,5 @@
+use velvet::{attacks::Tables, board::Board, moves::Move, perft::{divide, perft}};
+
 struct Case { name: &'static str, fen: &'static str, depth: u32, expected: u64 }
 
 const CASES: &[Case] = &[
@@ -20,3 +22,13 @@ const CASES: &[Case] = &[
         expected: 97_862,
     },
 ];
+
+#[test]
+fn perft_suite() {
+    let tables: Tables = Tables::new();
+    for case in CASES {
+        let mut board: Board = Board::from_fen(case.fen).unwrap();
+        let perft_result: u64 = perft(&mut board, &tables, case.depth);
+        assert_eq!(perft_result, case.expected, "case '{}' failed", case.name);
+    }
+}
