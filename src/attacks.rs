@@ -435,11 +435,11 @@ mod tests {
 
     #[test]
     fn rook_magic_are_correct() {
-        let tables = Tables::new();
+        let tables: Tables = Tables::new();
         for square in 0u8..64 {
             for occ in enumerate_subsets(mask_rook_attacks(square)) {
-                let expected = sliding_attacks(square, occ, &ROOK_DIRS);
-                let actual = tables.get_rook_attacks(square, occ);
+                let expected: Bitboard = sliding_attacks(square, occ, &ROOK_DIRS);
+                let actual: Bitboard = tables.get_rook_attacks(square, occ);
                 assert_eq!(actual, expected, "square {square}, occ {:#018X}", occ.0);
             }
         }
@@ -447,11 +447,11 @@ mod tests {
 
     #[test]
     fn bishop_magic_are_correct() {
-        let tables = Tables::new();
+        let tables: Tables = Tables::new();
         for square in 0u8..64 {
             for occ in enumerate_subsets(mask_bishop_attacks(square)) {
-                let expected = sliding_attacks(square, occ, &BISHOP_DIRS);
-                let actual = tables.get_bishop_attacks(square, occ);
+                let expected: Bitboard = sliding_attacks(square, occ, &BISHOP_DIRS);
+                let actual: Bitboard = tables.get_bishop_attacks(square, occ);
                 assert_eq!(actual, expected, "square {square}, occ {:#018X}", occ.0);
             }
         }

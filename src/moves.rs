@@ -206,28 +206,10 @@ fn generate_king_moves(board: &Board, tables: &Tables, moves: &mut Vec<Move>) {
     }
     
     // Kingside castle
-    // let (right_bit, king_from, empty_mask, safe_squares) = match stm {
-    //     Color::White => (0b0001u8, 4u8, (1u64 << 5) | (1u64 << 6), [5u8, 6u8]),
-    //     Color::Black => (0b0100u8, 60u8, (1u64 << 61) | (1u64 << 62), [61u8, 62u8]),
-    // };
-    // if board.castling_rights & right_bit == 0 { return; }
-    // if occupied.0 & empty_mask != 0 { return; }
-    // if is_square_attacked(king_from, stm.opposite(), board, tables) { return; }
-    // if safe_squares.iter().any(|&sq| is_square_attacked(sq, stm.opposite(), board, tables)) { return; }
-    // moves.push(Move::new(king_from, king_from + 2, MoveFlag::KingSideCastle));
     _add_castle_kingside(board, tables, moves);
-    _add_castle_queenside(board, tables, moves);
-
+    
     // Queenside castle
-    // let (right_bit, king_from, empty_mask, safe_squares) = match stm {
-    //     Color::White => (0b0010u8, 4u8, (1u64 << 3) | (1u64 << 2) | (1u64 << 1), [3u8, 2u8]),
-    //     Color::Black => (0b1000u8, 60u8, (1u64 << 59) | (1u64 << 58) | (1u64 << 57), [59u8, 58u8]),
-    // };
-    // if board.castling_rights & right_bit == 0 { return; }
-    // if occupied.0 & empty_mask != 0 { return; }
-    // if is_square_attacked(king_from, stm.opposite(), board, tables) { return; }
-    // if safe_squares.iter().any(|&sq| is_square_attacked(sq, stm.opposite(), board, tables)) { return; }
-    // moves.push(Move::new(king_from, king_from - 2, MoveFlag::QueenSideCastle));
+    _add_castle_queenside(board, tables, moves);
 }
 
 fn _add_castle_kingside(board: &Board, tables: &Tables, moves: &mut Vec<Move>) {
