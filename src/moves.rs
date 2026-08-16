@@ -158,7 +158,14 @@ fn is_square_attacked(square: u8, by: Color, board: &Board, tables: &Tables) -> 
 
     if (tables.get_knight_attacks(square) & pieces[PieceType::Knight as usize]) != Bitboard::EMPTY { return true; }
     if (tables.get_king_attacks(square) & pieces[PieceType::King as usize]) != Bitboard::EMPTY { return true; }
-    if (tables.get_pawn_attacks(square, by.opposite()) & pieces[PieceType::Pawn as usize]) != Bitboard::EMPTY { return true; }
+    // if (tables.get_pawn_attacks(square, by.opposite()) & pieces[PieceType::Pawn as usize]) != Bitboard::EMPTY { return true; }
+
+    let mut pawns = pieces[PieceType::Pawn as usize];
+    while let Some(from) = pawns.pop_lsb() {
+        if tables.get_pawn_attacks(from, by).is_set(square) {
+            return true;
+        }
+    }
 
     let diagonal_attackers: Bitboard = pieces[PieceType::Bishop as usize] | pieces[PieceType::Queen as usize];
     if (tables.get_bishop_attacks(square, occ) & diagonal_attackers) != Bitboard::EMPTY { return true; }

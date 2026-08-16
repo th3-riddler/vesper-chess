@@ -193,8 +193,8 @@ fn mask_pawn_attacks(square: u8, color: Color) -> Bitboard {
             if square % 8 != 7 { attacks.0 |= pos << 9 }
         },
         Color::Black => {
-            if square % 8 != 0 { attacks.0 |= pos >> 7 }
-            if square % 8 != 7 { attacks.0 |= pos >> 9 }
+            if square % 8 != 0 { attacks.0 |= pos >> 9 }
+            if square % 8 != 7 { attacks.0 |= pos >> 7 }
         }
     }
 

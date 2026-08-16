@@ -1,4 +1,4 @@
-use velvet::{attacks::Tables, board::Board, moves::Move, perft::{divide, perft}};
+use velvet::{attacks::Tables, board::Board, perft::perft};
 
 struct Case { name: &'static str, fen: &'static str, depth: u32, expected: u64 }
 
@@ -10,10 +10,28 @@ const CASES: &[Case] = &[
         expected: 20,
     },
     Case {
+        name: "startpos_depth_3",
+        fen: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+        depth: 3,
+        expected: 8902,
+    },
+    Case {
         name: "startpos_depth_4",
         fen: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
         depth: 4,
         expected: 197_281,
+    },
+    Case {
+        name: "startpos_depth_5",
+        fen: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+        depth: 5,
+        expected: 4_865_609,
+    },
+    Case {
+        name: "startpos_depth_6",
+        fen: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+        depth: 6,
+        expected: 119_060_324,
     },
     Case {
         name: "kiwipete_depth_3",
