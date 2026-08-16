@@ -333,13 +333,13 @@ fn init_rook_magic(square: u8) -> MagicEntry {
 fn init_bishop_magic(square: u8) -> MagicEntry {
     let mask = mask_bishop_attacks(square);
     // let (magic, relevant_bits) = _find_magic_numbers(square, mask, &BISHOP_DIRS);
-    let magic = BISHOP_MAGICS[square as usize];
-    let relevant_bits = mask.pop_count();
+    let magic: u64 = BISHOP_MAGICS[square as usize];
+    let relevant_bits: u32 = mask.pop_count();
     let mut attacks: Vec<Option<Bitboard>> = vec![None; 1 << relevant_bits];
 
     for occ in enumerate_subsets(mask) {
         let real_attacks = sliding_attacks(square, occ, &BISHOP_DIRS);
-        let index = (occ.0.wrapping_mul(magic) >> (64 - relevant_bits)) as usize;
+        let index: usize = (occ.0.wrapping_mul(magic) >> (64 - relevant_bits)) as usize;
         match attacks[index] {
             None => attacks[index] = Some(real_attacks),
             Some(existing) if existing == real_attacks => {},
@@ -357,7 +357,7 @@ fn init_bishop_magic(square: u8) -> MagicEntry {
 
 /* Generates sliding attacks for a piece at the given square */
 fn sliding_attacks(square: u8, blockers: Bitboard, dirs: &[(i8, i8); 4]) -> Bitboard {
-    let mut attacks = Bitboard::EMPTY;
+    let mut attacks: Bitboard = Bitboard::EMPTY;
     let (start_rank, start_file) = ((square / 8) as i8, (square % 8) as i8);
     for &(dr, df) in dirs {
         let (mut r, mut f) = (start_rank, start_file);
@@ -378,7 +378,7 @@ fn sliding_attacks(square: u8, blockers: Bitboard, dirs: &[(i8, i8); 4]) -> Bitb
 
 /* Implements the xorshift64 pseudo-random number generator */
 fn _xorshift64(state: &mut u64) -> u64 {
-    let mut x = *state;
+    let mut x: u64 = *state;
     x ^= x << 13;
     x ^= x >> 7;
     x ^= x << 17;
@@ -388,20 +388,20 @@ fn _xorshift64(state: &mut u64) -> u64 {
 
 /* Finds magic numbers for the given square and mask */
 fn _find_magic_numbers(square: u8, mask: Bitboard, dirs: &[(i8, i8); 4]) -> (u64, u32) {
-    let relevant_bits = mask.pop_count();
-    let occupancies = enumerate_subsets(mask);
+    let relevant_bits: u32 = mask.pop_count();
+    let occupancies: Vec<Bitboard> = enumerate_subsets(mask);
     let attacks: Vec<Bitboard> = occupancies
                                 .iter()
                                 .map(|&occ| sliding_attacks(square, occ, dirs))
                                 .collect();
     
-    let mut seed = 0x9E37_79B9_7F4A_7C15u64 ^ (square as u64);
+    let mut seed: u64 = 0x9E37_79B9_7F4A_7C15u64 ^ (square as u64);
     loop {
-        let magic = _xorshift64(&mut seed) & _xorshift64(&mut seed) & _xorshift64(&mut seed);
+        let magic: u64 = _xorshift64(&mut seed) & _xorshift64(&mut seed) & _xorshift64(&mut seed);
         let mut table: Vec<Option<Bitboard>> = vec![None; 1 << relevant_bits];
-        let mut ok = true;
+        let mut ok: bool = true;
         for (i, &occ) in occupancies.iter().enumerate() {
-            let index = (occ.0.wrapping_mul(magic) >> (64 - relevant_bits)) as usize;
+            let index: usize = (occ.0.wrapping_mul(magic) >> (64 - relevant_bits)) as usize;
             match table[index] {
                 None => table[index] = Some(attacks[i]),
                 Some(existing) if existing == attacks[i] => {},
