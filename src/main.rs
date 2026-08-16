@@ -1,5 +1,5 @@
 use velvet::attacks::Tables;
 
 fn main() {
-    let tables = Tables::new();
+    let _tables: Tables = Tables::new();
 }
