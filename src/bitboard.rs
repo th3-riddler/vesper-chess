@@ -38,6 +38,7 @@ pub struct Bitboard (pub u64);
 
 impl Bitboard {
     pub const EMPTY: Bitboard = Bitboard(0);
+    pub const ALL: Bitboard = Bitboard(u64::MAX);
     
     pub fn set(&mut self, square: u8) {
         self.0 |= 1 << square;

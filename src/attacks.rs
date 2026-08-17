@@ -42,8 +42,8 @@ struct MagicEntry {
     attacks: Vec<Bitboard>,
 }
 
-const ROOK_DIRS: [(i8, i8); 4] = [(1, 0), (-1, 0), (0, 1), (0, -1)];
-const BISHOP_DIRS: [(i8, i8); 4] = [(1, 1), (1, -1), (-1, 1), (-1, -1)];
+pub(crate) const ROOK_DIRS: [(i8, i8); 4] = [(1, 0), (-1, 0), (0, 1), (0, -1)];
+pub(crate) const BISHOP_DIRS: [(i8, i8); 4] = [(1, 1), (1, -1), (-1, 1), (-1, -1)];
 
 pub const ROOK_MAGICS: [u64; 64] = [
     0x9080001184204004,
@@ -356,7 +356,7 @@ fn init_bishop_magic(square: u8) -> MagicEntry {
 }
 
 /* Generates sliding attacks for a piece at the given square */
-fn sliding_attacks(square: u8, blockers: Bitboard, dirs: &[(i8, i8); 4]) -> Bitboard {
+pub(crate) fn sliding_attacks(square: u8, blockers: Bitboard, dirs: &[(i8, i8); 4]) -> Bitboard {
     let mut attacks: Bitboard = Bitboard::EMPTY;
     let (start_rank, start_file) = ((square / 8) as i8, (square % 8) as i8);
     for &(dr, df) in dirs {

@@ -21,15 +21,15 @@ impl Board {
     }
 
     pub fn from_fen(fen: &str) -> Result<Board, String> {
-        let mut fields = fen.split_whitespace();
-        let placement = fields.next().ok_or_else(|| "Missing piece placement")?;
-        let side = fields.next().unwrap_or_else(|| "w");
-        let castling = fields.next().unwrap_or_else(|| "-");
-        let en_passant = fields.next().unwrap_or_else(|| "-");
+        let mut fields: std::str::SplitWhitespace<'_> = fen.split_whitespace();
+        let placement: &str = fields.next().ok_or_else(|| "Missing piece placement")?;
+        let side: &str = fields.next().unwrap_or_else(|| "w");
+        let castling: &str = fields.next().unwrap_or_else(|| "-");
+        let en_passant: &str = fields.next().unwrap_or_else(|| "-");
         let halfmove: u16 = fields.next().unwrap_or_else(|| "0").parse().unwrap_or_else(|_| 0);
         let fullmove: u16 = fields.next().unwrap_or_else(|| "1").parse().unwrap_or_else(|_| 1);
 
-        let mut board = Board {
+        let mut board: Board = Board {
             pieces: [[Bitboard::EMPTY; 6]; 2],
             side_to_move: Color::White,
             castling_rights: 0,
@@ -66,10 +66,10 @@ impl Board {
         Ok(board)
     }
 
-    pub fn piece_on(&mut self, color: Color, square: u8) -> Option<PieceType> {
-        for (i, bb) in self.pieces[color as usize].iter().enumerate() {
-            if bb.is_set(square) {
-                return Some(PieceType::from_usize(i));
+    pub fn piece_on(&self, color: Color, square: u8) -> Option<PieceType> {
+        for pt in [PieceType::Pawn, PieceType::Knight, PieceType::Bishop, PieceType::Rook, PieceType::Queen, PieceType::King] {
+            if self.pieces[color as usize][pt as usize].is_set(square) {
+                return Some(pt);
             }
         }
         None

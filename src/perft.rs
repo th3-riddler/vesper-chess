@@ -18,10 +18,10 @@ pub fn divide(board: &mut Board, tables: &Tables, depth: u32) -> Vec<(Move, u64)
     generate_legal_moves(board, tables)
         .into_iter()
         .map(|mv| {
-            let undo: UndoInfo = board.make_move(mv);
-            let nodes = perft(board, tables, depth - 1);
+            let undo = board.make_move(mv);
+            let count = perft(board, tables, depth - 1);
             board.unmake_move(mv, undo);
-            (mv, nodes)
+            (mv, count)
         })
         .collect()
 }
