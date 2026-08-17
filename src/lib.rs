@@ -4,7 +4,7 @@ pub mod attacks;
 pub mod moves;
 pub mod search;
 pub mod zobrist;
-pub mod evaluation;
+pub mod eval;
 pub mod uci;
 
 pub mod perft;

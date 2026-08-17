@@ -1,3 +1,5 @@
+use std::str::SplitWhitespace;
+
 use crate::{bitboard::{Bitboard, Color, PieceType}, moves::{Move, MoveFlag, UndoInfo}};
 
 pub struct Board {
@@ -21,7 +23,7 @@ impl Board {
     }
 
     pub fn from_fen(fen: &str) -> Result<Board, String> {
-        let mut fields: std::str::SplitWhitespace<'_> = fen.split_whitespace();
+        let mut fields: SplitWhitespace = fen.split_whitespace();
         let placement: &str = fields.next().ok_or_else(|| "Missing piece placement")?;
         let side: &str = fields.next().unwrap_or_else(|| "w");
         let castling: &str = fields.next().unwrap_or_else(|| "-");
@@ -174,6 +176,22 @@ impl Board {
         let (rook_from, rook_to) = _castle_rook_squares(stm, kingside);
         self.pieces[stm as usize][PieceType::Rook as usize].0 &= !(1u64 << rook_to);
         self.pieces[stm as usize][PieceType::Rook as usize].0 |= 1u64 << rook_from;
+    }
+
+    pub fn is_insufficient_material(&self) -> bool {
+        let no_king_count = |color: Color| -> u32 {
+            (0..5).map(|pt| self.pieces[color as usize][pt].pop_count()).sum()
+        };
+
+        let total = no_king_count(Color::White) + no_king_count(Color::Black);
+        if total == 0 { return true; }
+
+        let minor_pieces = |color: Color| -> u32 {
+            self.pieces[color as usize][PieceType::Knight as usize].pop_count()
+            + self.pieces[color as usize][PieceType::Bishop as usize].pop_count()
+        };
+
+        total == 1 && minor_pieces(Color::White) + minor_pieces(Color::Black) == 1
     }
 }
 

@@ -96,6 +96,12 @@ impl UndoInfo {
     pub fn halfmove_clock(&self) -> u16 { self.halfmove_clock }
 }
 
+pub fn is_in_check(board: &Board, tables: &Tables) -> bool {
+    let stm: Color = board.side_to_move;
+    let king_sq: u8 = board.pieces[stm as usize][PieceType::King as usize].0.trailing_zeros() as u8;
+    compute_checkers(board, tables, king_sq, stm) != Bitboard::EMPTY
+}
+
 /* Compute the bitboard of all pieces that are checking the king of the side to move. */
 fn compute_checkers(board: &Board, tables: &Tables, king_sq: u8, stm: Color) -> Bitboard {
     let opp: Color = stm.opposite();
