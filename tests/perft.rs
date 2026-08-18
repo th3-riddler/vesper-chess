@@ -1,4 +1,4 @@
-use felt::{attacks::Tables, board::Board, perft::perft};
+use moss::{attacks::Tables, board::Board, perft::perft};
 
 struct Case { name: &'static str, fen: &'static str, depth: u32, expected: u64 }
 

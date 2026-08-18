@@ -1,4 +1,8 @@
-use std::{cmp::Reverse, time::Instant};
+use std::{
+    cmp::Reverse, sync::{
+        Arc, atomic::{AtomicBool, Ordering},
+    }, time::Instant, u32,
+};
 
 use crate::{attacks::Tables, bitboard::{Color, PieceType}, board::Board, eval::evaluate, moves::{Move, MoveFlag, UndoInfo, generate_legal_moves, is_in_check}, tt::{Bound, TTEntry, TranspositionTable}};
 
@@ -8,6 +12,29 @@ const INFINITY: i32 = 32_000;
 const MATE_THRESHOLD: i32 = MATE_VALUE - 1000;
 
 const MVV_LVA_VALUES: [i32; 6] = [100, 320, 330, 500, 900, 10_000]; // Pawn, Knight, Bishop, Rook, Queen, King
+
+pub struct SearchControl {
+    deadline: Instant,
+    stop: Arc<AtomicBool>,
+    nodes: u64,
+    aborted: bool,
+}
+
+impl SearchControl {
+    pub fn new(deadline: Instant, stop: Arc<AtomicBool>) -> Self {
+        SearchControl { deadline, stop, nodes: 0, aborted: false }
+    }
+    
+    fn poll(&mut self) -> bool {
+        self.nodes += 1;
+        if !self.aborted && self.nodes % 2048 == 0 && (self.stop.load(Ordering::Relaxed) || Instant::now() >= self.deadline) {
+            self.aborted = true;
+        }
+        self.aborted
+    }
+    
+    pub fn is_aborted(&self) -> bool { self.aborted }
+}
 
 fn score_to_tt(score: i32, ply: u32) -> i32 {
     if score >= MATE_THRESHOLD { score + ply as i32 }
@@ -19,10 +46,6 @@ fn score_from_tt(score: i32, ply: u32) -> i32 {
     if score >= MATE_THRESHOLD { score - ply as i32 }
     else if score <= -MATE_THRESHOLD { score + ply as i32 }
     else { score }
-}
-
-fn tt_best_move_at_root(board: &Board, tt: &mut TranspositionTable) -> Option<Move> {
-    tt.probe(board.zobrist_key).map(|e| e.best_move())
 }
 
 fn score_move(mv: Move, board: &Board) -> i32 {
@@ -53,9 +76,11 @@ fn is_repetition(board: &Board, history: &[u64]) -> bool {
 }
 
 fn negamax(
-    board: &mut Board, tables: &Tables, tt: &mut TranspositionTable,
-    history: &mut Vec<u64>, depth: u32, ply: u32, mut alpha: i32, beta: i32
+    board: &mut Board, tables: &Tables, tt: &mut TranspositionTable, history: &mut Vec<u64>,
+    ctrl: &mut SearchControl, depth: u32, ply: u32, mut alpha: i32, beta: i32
 ) -> i32 {
+
+    if ctrl.poll() { return alpha; }
     
     if ply > 0 && (board.is_insufficient_material() || board.halfmove_clock >= 100 || is_repetition(board, history)) {
         return 0;
@@ -82,7 +107,7 @@ fn negamax(
     }
 
     let alpha_orig: i32 = alpha;
-    let hash_move: Option<Move> = tt_entry.map(|e| e.best_move());
+    let hash_move: Option<Move> = tt_entry.map(|e: TTEntry| e.best_move());
     let mut best_move: Move = moves[0];
     let mut best_score = -INFINITY;
 
@@ -90,9 +115,11 @@ fn negamax(
         let undo: UndoInfo = board.make_move(mv);
         history.push(board.zobrist_key);
 
-        let score: i32 = -negamax(board, tables, tt, history, depth - 1, ply + 1, -beta, -alpha);
+        let score: i32 = -negamax(board, tables, tt, history, ctrl, depth - 1, ply + 1, -beta, -alpha);
         history.pop();
         board.unmake_move(mv, undo);
+
+        if ctrl.is_aborted() { return best_score.max(alpha_orig); }
 
         if score > best_score { best_score = score; best_move = mv; }
         alpha = alpha.max(best_score);
@@ -141,19 +168,20 @@ fn quiescence(board: &mut Board, tables: &Tables, tt_entry: Option<TTEntry>, ply
 }
 
 /* Iterative Deepening */
-pub fn search_best_move(board: &mut Board, tables: &Tables, tt: &mut TranspositionTable, history: &mut Vec<u64>, deadline: Instant) -> Move {
+pub fn search_best_move(
+    board: &mut Board, tables: &Tables, tt: &mut TranspositionTable,
+    history: &mut Vec<u64>, ctrl: &mut SearchControl, max_depth: Option<u32>
+) -> Move {
     let root_moves: Vec<Move> = generate_legal_moves(board, tables);
     assert!(!root_moves.is_empty(), "search_best_move called with no legal moves available");
 
     let mut best_move: Move = root_moves[0];
 
-    for depth in 1.. {
-        if Instant::now() >= deadline { break; }
-        
-        negamax(board, tables, tt, history, depth, 0, -INFINITY, INFINITY);
-        if let Some(entry_move) = tt_best_move_at_root(board, tt) { best_move = entry_move }
-
-        if Instant::now() >= deadline { break; }
+    for depth in 1..=max_depth.unwrap_or_else(|| u32::MAX) {
+        if ctrl.stop.load(Ordering::Relaxed) || Instant::now() >= ctrl.deadline { break; }
+        negamax(board, tables, tt, history, ctrl, depth, 0, -INFINITY, INFINITY);
+        if ctrl.is_aborted() { break; }
+        if let Some(mv) = tt.probe(board.zobrist_key).map(|e| e.best_move()) { best_move = mv; }
     }
 
     best_move

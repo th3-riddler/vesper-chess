@@ -1,6 +1,6 @@
 use std::str::SplitWhitespace;
 
-use crate::{bitboard::{Bitboard, Color, PieceType}, moves::{Move, MoveFlag, UndoInfo}, zobrist::{ZobristKeys, keys}};
+use crate::{bitboard::{Bitboard, Color, PieceType}, moves::{Move, MoveFlag, UndoInfo}, uci::square_from_algebraic, zobrist::{ZobristKeys, keys}};
 
 pub struct Board {
     pub pieces: [[Bitboard; 6]; 2],
@@ -24,7 +24,7 @@ impl Board {
     }
 
     pub fn from_fen(fen: &str) -> Result<Board, String> {
-        let mut fields: SplitWhitespace = fen.split_whitespace();
+        let mut fields: SplitWhitespace<'_> = fen.split_whitespace();
         let placement: &str = fields.next().ok_or_else(|| "Missing piece placement")?;
         let side: &str = fields.next().unwrap_or_else(|| "w");
         let castling: &str = fields.next().unwrap_or_else(|| "-");
@@ -276,30 +276,6 @@ fn piece_from_fen_char(c: &char) -> Option<(Color, PieceType)> {
         'P' => Some((Color::White, PieceType::Pawn)),
         _ => None,
     }
-}
-
-/* Converts an algebraic square notation to a bitboard index (e.g., "a1" -> 0, "h8" -> 63) */
-fn square_from_algebraic(ep: &str) -> Option<u8> {
-    if ep.len() != 2 {
-        return None;
-    }
-    let file = ep.chars().nth(0).unwrap();
-    let rank = ep.chars().nth(1).unwrap();
-
-    if !('a'..='h').contains(&file) || !('1'..='8').contains(&rank) {
-        return None;
-    }
-
-    let file_index = (file as u8) - b'a';
-    let rank_index = (rank as u8) - b'1';
-
-    Some(rank_index * 8 + file_index)
-}
-
-pub fn square_from_index(index: u8) -> String {
-    let file = (index % 8) as u8 + b'a';
-    let rank = (index / 8) as u8 + b'1';
-    format!("{}{}", file as char, rank as char)
 }
 
 // TODO: Implement a function to convert a Board back to FEN notation
