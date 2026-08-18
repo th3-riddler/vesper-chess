@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 
-use velvet::{attacks::Tables, board::{self, Board}, moves::generate_legal_moves, search::search_best_move};
+use velvet::{attacks::Tables, board::Board, moves::generate_legal_moves, search::search_best_move};
 
 #[test]
 fn detects_diagonal_pawn_pin() {
@@ -38,3 +38,19 @@ fn finds_mate_in_one() {
     let best = search_best_move(&mut board, &tables, deadline);
     assert_eq!((best.from(), best.to()), (0, 56));
 }
+
+#[test]
+    fn zobrist_incremental_matches_from_scratch() {
+        fn check(board: &mut Board, tables: &Tables, depth: u32) {
+            assert_eq!(board.zobrist_key, board.compute_zobrist_key(), "hash drifted from true value");
+            if depth == 0 { return; }
+            for mv in generate_legal_moves(board, tables) {
+                let undo = board.make_move(mv);
+                check(board, tables, depth - 1);
+                board.unmake_move(mv, undo);
+                assert_eq!(board.zobrist_key, undo.zobrist_key(), "unmake didn't restore hash");
+            }
+        }
+        let mut board = Board::from_fen("r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1").unwrap();
+        check(&mut board, &Tables::new(), 3);
+    }

@@ -83,17 +83,19 @@ pub struct UndoInfo {
     castling_rights: u8,
     en_passant: Option<u8>,
     halfmove_clock: u16,
+    zobrist_key: u64,
 }
 
 impl UndoInfo {
-    pub fn new(piece: PieceType, captured: Option<PieceType>, castling_rights: u8, en_passant: Option<u8>, halfmove_clock: u16) -> Self {
-        Self { piece, captured, castling_rights, en_passant, halfmove_clock }
+    pub fn new(piece: PieceType, captured: Option<PieceType>, castling_rights: u8, en_passant: Option<u8>, halfmove_clock: u16, zobrist_key: u64) -> Self {
+        Self { piece, captured, castling_rights, en_passant, halfmove_clock, zobrist_key }
     }
     pub fn piece(&self) -> PieceType { self.piece }
     pub fn captured(&self) -> Option<PieceType> { self.captured }
     pub fn castling_rights(&self) -> u8 { self.castling_rights }
     pub fn en_passant(&self) -> Option<u8> { self.en_passant }
     pub fn halfmove_clock(&self) -> u16 { self.halfmove_clock }
+    pub fn zobrist_key(&self) -> u64 { self.zobrist_key }
 }
 
 pub fn is_in_check(board: &Board, tables: &Tables) -> bool {

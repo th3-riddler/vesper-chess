@@ -1,6 +1,6 @@
 use std::{cmp::Reverse, time::Instant};
 
-use crate::{attacks::Tables, bitboard::{Color, PieceType}, board::Board, eval::evaluate, moves::{self, Move, MoveFlag, generate_legal_moves, is_in_check}};
+use crate::{attacks::Tables, bitboard::{Color, PieceType}, board::Board, eval::evaluate, moves::{Move, MoveFlag, generate_legal_moves, is_in_check}};
 
 const MATE_VALUE: i32 = 30_000;
 const INFINITY: i32 = 32_000;
@@ -111,6 +111,6 @@ pub fn search_best_move(board: &mut Board, tables: &Tables, deadline: Instant) -
         best_move = depth_best_move;
         if Instant::now() >= deadline { break; }
     }
-    
+
     best_move
 }
