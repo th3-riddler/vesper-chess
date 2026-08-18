@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 
-use velvet::{attacks::Tables, board::{Board, square_from_index}, search::search_best_move, tt::TranspositionTable};
+use felt::{attacks::Tables, board::{Board, square_from_index}, search::search_best_move, tt::TranspositionTable};
 
 fn main() {
     let tables: Tables = Tables::new();

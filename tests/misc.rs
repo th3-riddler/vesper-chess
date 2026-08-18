@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 
-use velvet::{attacks::Tables, board::Board, moves::generate_legal_moves, search::search_best_move, tt::TranspositionTable};
+use felt::{attacks::Tables, board::Board, moves::generate_legal_moves, search::search_best_move, tt::TranspositionTable};
 
 #[test]
 fn detects_diagonal_pawn_pin() {
