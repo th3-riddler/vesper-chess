@@ -1,3 +1,3 @@
 fn main() {
-    moss::uci::uci_loop();
+    vesper::uci::uci_loop();
 }

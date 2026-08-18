@@ -17,18 +17,23 @@ pub(crate) struct TTEntry {
 }
 
 impl TTEntry {
+    #[inline]
     pub fn _key(&self) -> u64 {
         self.key
     }
+    #[inline]
     pub fn depth(&self) -> u8 {
         self.depth
     }
+    #[inline]
     pub fn score(&self) -> i32 {
         self.score
     }
+    #[inline]
     pub fn best_move(&self) -> Move {
         self.best_move
     }
+    #[inline]
     pub fn bound(&self) -> Bound {
         self.bound
     }

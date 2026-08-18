@@ -1,4 +1,4 @@
-use moss::{attacks::Tables, board::Board, moves::generate_legal_moves};
+use vesper::{attacks::Tables, board::Board, moves::generate_legal_moves};
 
 #[test]
 fn detects_diagonal_pawn_pin() {

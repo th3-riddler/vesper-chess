@@ -1,4 +1,4 @@
-use moss::{attacks::Tables, board::Board, perft::perft};
+use vesper::{attacks::Tables, board::Board, perft::perft};
 
 struct Case {
     name: &'static str,

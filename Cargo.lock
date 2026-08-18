@@ -3,5 +3,5 @@
 version = 4
 
 [[package]]
-name = "moss"
+name = "vesper"
 version = "0.1.0"

@@ -14,13 +14,12 @@ use crate::{
     eval::evaluate,
     moves::{Move, MoveFlag, UndoInfo, generate_legal_moves, is_in_check},
     tt::{Bound, TTEntry, TranspositionTable},
-    uci::move_to_uci_string,
 };
 
-const MATE_VALUE: i32 = 30_000;
+pub(crate) const MATE_VALUE: i32 = 30_000;
 const INFINITY: i32 = 32_000;
 
-const MATE_THRESHOLD: i32 = MATE_VALUE - 1000;
+pub(crate) const MATE_THRESHOLD: i32 = MATE_VALUE - 1000;
 
 const MVV_LVA_VALUES: [i32; 6] = [100, 320, 330, 500, 900, 10_000]; // Pawn, Knight, Bishop, Rook, Queen, King
 
@@ -55,6 +54,18 @@ impl SearchControl {
     pub fn is_aborted(&self) -> bool {
         self.aborted
     }
+
+    fn count_node(&mut self) {
+        self.nodes += 1;
+    }
+}
+
+pub struct SearcInfo {
+    pub depth: u32,
+    pub score: i32,
+    pub nodes: u64,
+    pub time_ms: u128,
+    pub pv: Vec<Move>,
 }
 
 fn score_to_tt(score: i32, ply: u32) -> i32 {
@@ -158,7 +169,7 @@ fn negamax(
     }
 
     if depth == 0 {
-        return quiescence(board, tables, tt, ply, alpha, beta);
+        return quiescence(board, tables, tt, ctrl, ply, alpha, beta);
     }
 
     let moves: Vec<Move> = generate_legal_moves(board, tables);
@@ -173,7 +184,7 @@ fn negamax(
     let alpha_orig: i32 = alpha;
     let hash_move: Option<Move> = tt_entry.map(|e: TTEntry| e.best_move());
     let mut best_move: Move = moves[0];
-    let mut best_score = -INFINITY;
+    let mut best_score: i32 = -INFINITY;
 
     for mv in order_moves(moves, board, hash_move) {
         let undo: UndoInfo = board.make_move(mv);
@@ -229,12 +240,17 @@ fn quiescence(
     board: &mut Board,
     tables: &Tables,
     tt: &mut TranspositionTable,
+    ctrl: &mut SearchControl,
     ply: u32,
     mut alpha: i32,
     beta: i32,
 ) -> i32 {
-    let alpha_orig: i32 = alpha;
+    ctrl.count_node();
+    if ctrl.is_aborted() {
+        return alpha;
+    }
 
+    let alpha_orig: i32 = alpha;
     let tt_entry: Option<TTEntry> = tt.probe(board.zobrist_key);
     if let Some(entry) = tt_entry {
         let score: i32 = score_from_tt(entry.score(), ply);
@@ -271,7 +287,7 @@ fn quiescence(
 
     let all_moves: Vec<Move> = generate_legal_moves(board, tables);
     if in_check && all_moves.is_empty() {
-        let score = -(MATE_VALUE - ply as i32);
+        let score: i32 = -(MATE_VALUE - ply as i32);
         tt.store(
             board.zobrist_key,
             0,
@@ -287,13 +303,13 @@ fn quiescence(
     } else {
         all_moves
             .into_iter()
-            .filter(|mv| mv.flag().is_capture())
+            .filter(|mv: &Move| mv.flag().is_capture())
             .collect()
     };
 
-    for mv in order_moves(candidates, board, tt_entry.map(|e| e.best_move())) {
+    for mv in order_moves(candidates, board, tt_entry.map(|e: TTEntry| e.best_move())) {
         let undo: UndoInfo = board.make_move(mv);
-        let score = -quiescence(board, tables, tt, ply + 1, -beta, -alpha);
+        let score: i32 = -quiescence(board, tables, tt, ctrl, ply + 1, -beta, -alpha);
         board.unmake_move(mv, undo);
 
         if score > best_score {
@@ -306,13 +322,14 @@ fn quiescence(
         alpha = alpha.max(best_score);
     }
 
-    let bound = if best_score <= alpha_orig {
+    let bound: Bound = if best_score <= alpha_orig {
         Bound::Upper
     } else if best_score >= beta {
         Bound::Lower
     } else {
         Bound::Exact
     };
+
     tt.store(
         board.zobrist_key,
         0,
@@ -324,6 +341,43 @@ fn quiescence(
     best_score
 }
 
+fn extract_pv(
+    board: &mut Board,
+    tables: &Tables,
+    tt: &mut TranspositionTable,
+    max_len: u32,
+) -> Vec<Move> {
+    let mut pv: Vec<Move> = Vec::new();
+    let mut undo_stack: Vec<UndoInfo> = Vec::new();
+    let mut seen: Vec<u64> = Vec::new();
+
+    for _ in 0..max_len {
+        let Some(entry) = tt.probe(board.zobrist_key) else {
+            break;
+        };
+        if entry.best_move() == Move::NULL {
+            break;
+        }
+        let legal: Vec<Move> = generate_legal_moves(board, tables);
+        if !legal.contains(&entry.best_move()) {
+            break;
+        }
+        if seen.contains(&board.zobrist_key) {
+            break;
+        }
+
+        seen.push(board.zobrist_key);
+        pv.push(entry.best_move());
+        undo_stack.push(board.make_move(entry.best_move()));
+    }
+
+    for &mv in pv.iter().rev() {
+        board.unmake_move(mv, undo_stack.pop().unwrap());
+    }
+
+    pv
+}
+
 /* Iterative Deepening */
 pub fn search_best_move(
     board: &mut Board,
@@ -332,6 +386,7 @@ pub fn search_best_move(
     history: &mut Vec<u64>,
     ctrl: &mut SearchControl,
     max_depth: Option<u32>,
+    mut on_info: impl FnMut(&SearcInfo),
 ) -> Move {
     let root_moves: Vec<Move> = generate_legal_moves(board, tables);
     assert!(
@@ -340,26 +395,30 @@ pub fn search_best_move(
     );
 
     let mut best_move: Move = root_moves[0];
+    let start: Instant = Instant::now();
 
     for depth in 1..=max_depth.unwrap_or(u32::MAX) {
         if ctrl.stop.load(Ordering::Relaxed) || Instant::now() >= ctrl.deadline {
             break;
         }
-        negamax(
+        let score: i32 = negamax(
             board, tables, tt, history, ctrl, depth, 0, -INFINITY, INFINITY,
         );
         if ctrl.is_aborted() {
             break;
         }
+
         if let Some(entry) = tt.probe(board.zobrist_key) {
-            eprintln!(
-                "depth {depth}: {} (score {})",
-                move_to_uci_string(entry.best_move()),
-                entry.score()
-            );
             best_move = entry.best_move();
         }
-        // if let Some(mv) = tt.probe(board.zobrist_key).map(|e| e.best_move()) { best_move = mv; }
+        let pv = extract_pv(board, tables, tt, depth);
+        on_info(&SearcInfo {
+            depth,
+            score,
+            nodes: ctrl.nodes,
+            time_ms: start.elapsed().as_millis(),
+            pv,
+        })
     }
 
     best_move

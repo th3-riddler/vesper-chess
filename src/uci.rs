@@ -14,7 +14,7 @@ use crate::{
     bitboard::{Color, PieceType},
     board::Board,
     moves::{Move, MoveFlag, generate_legal_moves},
-    search::{SearchControl, search_best_move},
+    search::{MATE_THRESHOLD, MATE_VALUE, SearcInfo, SearchControl, search_best_move},
     tt::TranspositionTable,
 };
 
@@ -195,6 +195,18 @@ fn compute_deadline(p: &GoParams, stm: Color) -> (Instant, Option<u32>) {
     (now + Duration::from_millis(budget_ms), None)
 }
 
+fn format_score(score: i32) -> String {
+    if score >= MATE_THRESHOLD {
+        let plies: i32 = MATE_VALUE - score;
+        format!("mate {}", (plies + 1) / 2)
+    } else if score <= -MATE_THRESHOLD {
+        let plies: i32 = MATE_VALUE + score;
+        format!("mate -{}", (plies + 1) / 2)
+    } else {
+        format!("cp {score}")
+    }
+}
+
 pub fn uci_loop() {
     let tables: Arc<Tables> = Arc::new(Tables::new());
     let tt: Arc<Mutex<TranspositionTable>> = Arc::new(Mutex::new(TranspositionTable::new(64))); // 64 MB default
@@ -210,7 +222,7 @@ pub fn uci_loop() {
 
         match tokens.next() {
             Some("uci") => {
-                println!("id name Moss {}", VERSION);
+                println!("id name Vesper {}", VERSION);
                 println!("id author Redux");
                 println!("uciok");
             }
@@ -252,6 +264,18 @@ pub fn uci_loop() {
                         &mut history,
                         &mut ctrl,
                         max_depth,
+                        |info: &SearcInfo| {
+                            let pv: Vec<String> =
+                                info.pv.iter().map(|&mv| move_to_uci_string(mv)).collect();
+                            println!(
+                                "info depth {} score {} nodes {} time {} pv {}",
+                                info.depth,
+                                format_score(info.score),
+                                info.nodes,
+                                info.time_ms,
+                                pv.join(" ")
+                            );
+                        },
                     );
                     println!("bestmove {}", move_to_uci_string(best));
                 }));
