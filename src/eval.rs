@@ -10,5 +10,9 @@ pub fn evaluate(board: &Board) -> i32 {
 
         score += PIECE_VALUES[piece] * (white - black)
     }
-    if board.side_to_move == Color::White { score } else { -score }
+    if board.side_to_move == Color::White {
+        score
+    } else {
+        -score
+    }
 }

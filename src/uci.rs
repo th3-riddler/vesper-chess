@@ -1,16 +1,38 @@
-use std::{io::{self, BufRead}, str::SplitWhitespace, sync::{Arc, Mutex, MutexGuard, atomic::{AtomicBool, Ordering}}, thread, time::{Duration, Instant}};
+use std::{
+    io::{self, BufRead},
+    str::SplitWhitespace,
+    sync::{
+        Arc, Mutex, MutexGuard,
+        atomic::{AtomicBool, Ordering},
+    },
+    thread,
+    time::{Duration, Instant},
+};
 
-use crate::{attacks::Tables, bitboard::{Color, PieceType}, board::Board, moves::{Move, MoveFlag, generate_legal_moves}, search::{SearchControl, search_best_move}, tt::TranspositionTable};
+use crate::{
+    attacks::Tables,
+    bitboard::{Color, PieceType},
+    board::Board,
+    moves::{Move, MoveFlag, generate_legal_moves},
+    search::{SearchControl, search_best_move},
+    tt::TranspositionTable,
+};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub(crate) fn square_to_algebraic(square: u8) -> String {
-    format!("{}{}", (b'a' + square % 8) as char, (b'1' + square / 8) as char)
+    format!(
+        "{}{}",
+        (b'a' + square % 8) as char,
+        (b'1' + square / 8) as char
+    )
 }
 
 pub(crate) fn algebraic_to_square(s: &str) -> Option<u8> {
     let b: &[u8] = s.as_bytes();
-    if b.len() != 2 { return None; }
+    if b.len() != 2 {
+        return None;
+    }
     let file: u8 = b[0].checked_sub(b'a')?;
     let rank: u8 = b[1].checked_sub(b'1')?;
 
@@ -36,8 +58,8 @@ pub(crate) fn square_from_algebraic(ep: &str) -> Option<u8> {
 }
 
 pub fn square_from_index(index: u8) -> String {
-    let file = (index % 8) as u8 + b'a';
-    let rank = (index / 8) as u8 + b'1';
+    let file: u8 = (index % 8) + b'a';
+    let rank: u8 = (index / 8) + b'1';
     format!("{}{}", file as char, rank as char)
 }
 
@@ -47,49 +69,64 @@ pub fn move_to_uci_string(mv: Move) -> String {
         MoveFlag::PromotionR | MoveFlag::PromotionCaptureR => "r",
         MoveFlag::PromotionB | MoveFlag::PromotionCaptureB => "b",
         MoveFlag::PromotionN | MoveFlag::PromotionCaptureN => "n",
-        _ => ""
+        _ => "",
     };
-    format!("{}{}{}", square_to_algebraic(mv.from()), square_to_algebraic(mv.to()), promo)
+    format!(
+        "{}{}{}",
+        square_to_algebraic(mv.from()),
+        square_to_algebraic(mv.to()),
+        promo
+    )
 }
 
 pub fn parse_uci_move(s: &str, board: &Board, tables: &Tables) -> Option<Move> {
-    if s.len() < 4 { return None; }
+    if s.len() < 4 {
+        return None;
+    }
     let from: u8 = algebraic_to_square(&s[0..2])?;
-    let to: u8  = algebraic_to_square(&s[2..4])?;
+    let to: u8 = algebraic_to_square(&s[2..4])?;
     let promo_piece: Option<PieceType> = match s.as_bytes().get(4) {
         Some(b'q') => Some(PieceType::Queen),
         Some(b'r') => Some(PieceType::Rook),
         Some(b'b') => Some(PieceType::Bishop),
         Some(b'n') => Some(PieceType::Knight),
         None => None,
-        _ => return None
+        _ => return None,
     };
 
     generate_legal_moves(board, tables)
         .into_iter()
-        .find(|mv: &Move| mv.from() == from && mv.to() == to && mv.flag().promotion_piece() == promo_piece)
+        .find(|mv: &Move| {
+            mv.from() == from && mv.to() == to && mv.flag().promotion_piece() == promo_piece
+        })
 }
 
-fn handle_position_command(tokens: &mut SplitWhitespace, tables: &Tables, history: &mut Vec<u64>) -> Board {
+fn handle_position_command(
+    tokens: &mut SplitWhitespace,
+    tables: &Tables,
+    history: &mut Vec<u64>,
+) -> Board {
     let mut board = match tokens.next() {
         Some("fen") => {
             let fen: Vec<&str> = tokens.by_ref().take_while(|&t| t != "moves").collect();
             Board::from_fen(&fen.join(" ")).unwrap()
-        },
-        _ => Board::start_position().unwrap()
+        }
+        _ => Board::start_position().unwrap(),
     };
 
     history.clear();
     history.push(board.zobrist_key);
 
     for tok in tokens {
-        if tok == "moves" { continue; }
+        if tok == "moves" {
+            continue;
+        }
         if let Some(mv) = parse_uci_move(tok, &board, tables) {
             board.make_move(mv);
             history.push(board.zobrist_key);
         }
     }
-    
+
     board
 }
 
@@ -114,12 +151,24 @@ fn parse_go_command(mut tokens: SplitWhitespace) -> GoParams {
 
     while let Some(tok) = tokens.next() {
         match tok {
-            "depth" => { p.depth = tokens.next().and_then(|v: &str| v.parse().ok()); }
-            "movetime" => { p.movetime = tokens.next().and_then(|v: &str| v.parse().ok()); }
-            "wtime" => { p.wtime = tokens.next().and_then(|v: &str| v.parse().ok()); }
-            "btime" => { p.btime = tokens.next().and_then(|v: &str| v.parse().ok()); }
-            "winc" => { p.winc = tokens.next().and_then(|v: &str| v.parse().ok()); }
-            "binc" => { p.binc = tokens.next().and_then(|v: &str| v.parse().ok()); }
+            "depth" => {
+                p.depth = tokens.next().and_then(|v: &str| v.parse().ok());
+            }
+            "movetime" => {
+                p.movetime = tokens.next().and_then(|v: &str| v.parse().ok());
+            }
+            "wtime" => {
+                p.wtime = tokens.next().and_then(|v: &str| v.parse().ok());
+            }
+            "btime" => {
+                p.btime = tokens.next().and_then(|v: &str| v.parse().ok());
+            }
+            "winc" => {
+                p.winc = tokens.next().and_then(|v: &str| v.parse().ok());
+            }
+            "binc" => {
+                p.binc = tokens.next().and_then(|v: &str| v.parse().ok());
+            }
             _ => {}
         }
     }
@@ -129,12 +178,16 @@ fn parse_go_command(mut tokens: SplitWhitespace) -> GoParams {
 
 fn compute_deadline(p: &GoParams, stm: Color) -> (Instant, Option<u32>) {
     let now: Instant = Instant::now();
-    if let Some(d) = p.depth { return (now + Duration::from_secs(3600), Some(d)); }
-    if let Some(mt) = p.movetime { return (now + Duration::from_millis(mt), None); }
+    if let Some(d) = p.depth {
+        return (now + Duration::from_secs(3600), Some(d));
+    }
+    if let Some(mt) = p.movetime {
+        return (now + Duration::from_millis(mt), None);
+    }
 
     let (time, inc) = match stm {
-        Color::White => (p.wtime.unwrap_or_else(|| 10_000), p.winc.unwrap_or_else(|| 0)),
-        Color::Black => (p.btime.unwrap_or_else(|| 10_000), p.binc.unwrap_or_else(|| 0)),
+        Color::White => (p.wtime.unwrap_or(10_000), p.winc.unwrap_or(0)),
+        Color::Black => (p.btime.unwrap_or(10_000), p.binc.unwrap_or(0)),
     };
 
     let budget_ms: u64 = (time / 30 + inc / 2).max(50);
@@ -146,7 +199,8 @@ pub fn uci_loop() {
     let tables: Arc<Tables> = Arc::new(Tables::new());
     let tt: Arc<Mutex<TranspositionTable>> = Arc::new(Mutex::new(TranspositionTable::new(64))); // 64 MB default
     let board: Arc<Mutex<Board>> = Arc::new(Mutex::new(Board::start_position().unwrap()));
-    let history: Arc<Mutex<Vec<u64>>> = Arc::new(Mutex::new(vec![board.lock().unwrap().zobrist_key]));
+    let history: Arc<Mutex<Vec<u64>>> =
+        Arc::new(Mutex::new(vec![board.lock().unwrap().zobrist_key]));
     let stop_flag: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
     let mut search_handle: Option<thread::JoinHandle<()>> = None;
 
@@ -159,41 +213,57 @@ pub fn uci_loop() {
                 println!("id name Moss {}", VERSION);
                 println!("id author Redux");
                 println!("uciok");
-            },
-            Some("isready") => { println!("readyok"); },
+            }
+            Some("isready") => {
+                println!("readyok");
+            }
             Some("ucinewgame") => {
                 *board.lock().unwrap() = Board::start_position().unwrap();
                 tt.lock().unwrap().clear();
                 *history.lock().unwrap() = vec![board.lock().unwrap().zobrist_key];
-            },
+            }
             Some("position") => {
                 let mut hist: MutexGuard<'_, Vec<u64>> = history.lock().unwrap();
                 let new_board: Board = handle_position_command(&mut tokens, &tables, &mut hist);
                 *board.lock().unwrap() = new_board;
-            },
+            }
             Some("go") => {
                 stop_flag.store(false, Ordering::Relaxed);
-                let params = parse_go_command(tokens);
-                let (board, tables, tt, history, stop_flag) = 
-                    (Arc::clone(&board), Arc::clone(&tables), Arc::clone(&tt), Arc::clone(&history), Arc::clone(&stop_flag));
-                
+                let params: GoParams = parse_go_command(tokens);
+                let (board, tables, tt, history, stop_flag) = (
+                    Arc::clone(&board),
+                    Arc::clone(&tables),
+                    Arc::clone(&tt),
+                    Arc::clone(&history),
+                    Arc::clone(&stop_flag),
+                );
+
                 search_handle = Some(thread::spawn(move || {
-                    let mut board = board.lock().unwrap();
+                    let mut board: MutexGuard<'_, Board> = board.lock().unwrap();
                     let (deadline, max_depth) = compute_deadline(&params, board.side_to_move);
                     let mut ctrl: SearchControl = SearchControl::new(deadline, stop_flag);
                     let mut tt: MutexGuard<'_, TranspositionTable> = tt.lock().unwrap();
                     let mut history: MutexGuard<'_, Vec<u64>> = history.lock().unwrap();
 
-                    let best: Move = search_best_move(&mut board, &tables, &mut tt, &mut history, &mut ctrl, max_depth);
+                    let best: Move = search_best_move(
+                        &mut board,
+                        &tables,
+                        &mut tt,
+                        &mut history,
+                        &mut ctrl,
+                        max_depth,
+                    );
                     println!("bestmove {}", move_to_uci_string(best));
                 }));
-            },
+            }
             Some("stop") => stop_flag.store(true, Ordering::Relaxed),
             Some("quit") => {
                 stop_flag.store(false, Ordering::Relaxed);
-                if let Some(h) = search_handle.take() { let _ = h.join(); }
+                if let Some(h) = search_handle.take() {
+                    let _ = h.join();
+                }
                 break;
-            },
+            }
             _ => {}
         }
     }

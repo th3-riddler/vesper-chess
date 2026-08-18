@@ -1,10 +1,13 @@
-use std::ops::BitOr;
 use std::ops::BitAnd;
+use std::ops::BitOr;
 use std::ops::Not;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
-pub enum Color { White, Black }
+pub enum Color {
+    White,
+    Black,
+}
 
 impl Color {
     pub fn opposite(&self) -> Color {
@@ -17,15 +20,22 @@ impl Color {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
-pub enum PieceType { Pawn, Knight, Bishop, Rook, Queen, King }
+pub enum PieceType {
+    Pawn,
+    Knight,
+    Bishop,
+    Rook,
+    Queen,
+    King,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct Bitboard (pub u64);
+pub struct Bitboard(pub u64);
 
 impl Bitboard {
     pub const EMPTY: Bitboard = Bitboard(0);
     pub const ALL: Bitboard = Bitboard(u64::MAX);
-    
+
     pub fn set(&mut self, square: u8) {
         self.0 |= 1 << square;
     }

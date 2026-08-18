@@ -1,9 +1,17 @@
-use crate::{attacks::Tables, board::Board, moves::{Move, UndoInfo, generate_legal_moves}};
+use crate::{
+    attacks::Tables,
+    board::Board,
+    moves::{Move, UndoInfo, generate_legal_moves},
+};
 
 pub fn perft(board: &mut Board, tables: &Tables, depth: u32) -> u64 {
-    if depth == 0 { return 1; }
+    if depth == 0 {
+        return 1;
+    }
     let moves: Vec<crate::moves::Move> = generate_legal_moves(board, tables);
-    if depth == 1 { return moves.len() as u64; }
+    if depth == 1 {
+        return moves.len() as u64;
+    }
     let mut nodes: u64 = 0;
     for mv in moves {
         let undo: UndoInfo = board.make_move(mv);

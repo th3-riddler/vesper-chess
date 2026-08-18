@@ -1,4 +1,4 @@
-use crate::{bitboard::{Bitboard, Color}};
+use crate::bitboard::{Bitboard, Color};
 
 pub struct Tables {
     knight_attacks: [Bitboard; 64],
@@ -6,6 +6,12 @@ pub struct Tables {
     pawn_attacks: [[Bitboard; 64]; 2],
     rook_magics: [MagicEntry; 64],
     bishop_magics: [MagicEntry; 64],
+}
+
+impl Default for Tables {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Tables {
@@ -19,20 +25,40 @@ impl Tables {
             pawn_attacks[Color::White as usize][sq as usize] = mask_pawn_attacks(sq, Color::White);
             pawn_attacks[Color::Black as usize][sq as usize] = mask_pawn_attacks(sq, Color::Black);
         }
-        let rook_magics: [MagicEntry; 64] = std::array::from_fn(|sq: usize| init_rook_magic(sq as u8));
-        let bishop_magics: [MagicEntry; 64] = std::array::from_fn(|sq: usize| init_bishop_magic(sq as u8));
+        let rook_magics: [MagicEntry; 64] =
+            std::array::from_fn(|sq: usize| init_rook_magic(sq as u8));
+        let bishop_magics: [MagicEntry; 64] =
+            std::array::from_fn(|sq: usize| init_bishop_magic(sq as u8));
 
         // _generate_magic_numbers();
 
-        Tables { knight_attacks, king_attacks, pawn_attacks, rook_magics, bishop_magics }
+        Tables {
+            knight_attacks,
+            king_attacks,
+            pawn_attacks,
+            rook_magics,
+            bishop_magics,
+        }
     }
 
-    pub fn get_knight_attacks(&self, square: u8) -> Bitboard { self.knight_attacks[square as usize] }
-    pub fn get_king_attacks(&self, square: u8) -> Bitboard { self.king_attacks[square as usize] }
-    pub fn get_pawn_attacks(&self, square: u8, color: Color) -> Bitboard { self.pawn_attacks[color as usize][square as usize] }
-    pub fn get_rook_attacks(&self, square: u8, occupied: Bitboard) -> Bitboard { sliding_lookup(occupied, &self.rook_magics[square as usize]) }
-    pub fn get_bishop_attacks(&self, square: u8, occupied: Bitboard) -> Bitboard { sliding_lookup(occupied, &self.bishop_magics[square as usize]) }
-    pub fn get_queen_attacks(&self, square: u8, occupied: Bitboard) -> Bitboard { self.get_rook_attacks(square, occupied) | self.get_bishop_attacks(square, occupied) }
+    pub fn get_knight_attacks(&self, square: u8) -> Bitboard {
+        self.knight_attacks[square as usize]
+    }
+    pub fn get_king_attacks(&self, square: u8) -> Bitboard {
+        self.king_attacks[square as usize]
+    }
+    pub fn get_pawn_attacks(&self, square: u8, color: Color) -> Bitboard {
+        self.pawn_attacks[color as usize][square as usize]
+    }
+    pub fn get_rook_attacks(&self, square: u8, occupied: Bitboard) -> Bitboard {
+        sliding_lookup(occupied, &self.rook_magics[square as usize])
+    }
+    pub fn get_bishop_attacks(&self, square: u8, occupied: Bitboard) -> Bitboard {
+        sliding_lookup(occupied, &self.bishop_magics[square as usize])
+    }
+    pub fn get_queen_attacks(&self, square: u8, occupied: Bitboard) -> Bitboard {
+        self.get_rook_attacks(square, occupied) | self.get_bishop_attacks(square, occupied)
+    }
 }
 
 struct MagicEntry {
@@ -189,12 +215,20 @@ fn mask_pawn_attacks(square: u8, color: Color) -> Bitboard {
 
     match color {
         Color::White => {
-            if square % 8 != 0 { attacks.0 |= pos << 7 }
-            if square % 8 != 7 { attacks.0 |= pos << 9 }
-        },
+            if square % 8 != 0 {
+                attacks.0 |= pos << 7
+            }
+            if square % 8 != 7 {
+                attacks.0 |= pos << 9
+            }
+        }
         Color::Black => {
-            if square % 8 != 0 { attacks.0 |= pos >> 9 }
-            if square % 8 != 7 { attacks.0 |= pos >> 7 }
+            if square % 8 != 0 {
+                attacks.0 |= pos >> 9
+            }
+            if square % 8 != 7 {
+                attacks.0 |= pos >> 7
+            }
         }
     }
 
@@ -235,7 +269,7 @@ fn mask_knight_attacks(square: u8) -> Bitboard {
     let mut attacks: Bitboard = Bitboard::EMPTY;
     let pos: u64 = 1u64 << square;
 
-    if square % 8 > 0 && square / 8 < 6 { 
+    if square % 8 > 0 && square / 8 < 6 {
         attacks.0 |= pos << 15;
     }
     if square % 8 < 7 && square / 8 < 6 {
@@ -275,7 +309,9 @@ fn enumerate_subsets(mask: Bitboard) -> Vec<Bitboard> {
     loop {
         subsets.push(Bitboard(subset));
         subset = subset.wrapping_sub(mask.0) & mask.0;
-        if subset == 0 { break; }
+        if subset == 0 {
+            break;
+        }
     }
     subsets
 }
@@ -284,8 +320,16 @@ fn enumerate_subsets(mask: Bitboard) -> Vec<Bitboard> {
 fn mask_rook_attacks(square: u8) -> Bitboard {
     let (rank, file) = (square / 8, square % 8);
     let mut mask = Bitboard::EMPTY;
-    for r in 1..7 { if r != rank { mask.set(r * 8 + file); } }
-    for f in 1..7 { if f != file { mask.set(rank * 8 + f); } }
+    for r in 1..7 {
+        if r != rank {
+            mask.set(r * 8 + file);
+        }
+    }
+    for f in 1..7 {
+        if f != file {
+            mask.set(rank * 8 + f);
+        }
+    }
     mask
 }
 
@@ -295,7 +339,9 @@ fn mask_bishop_attacks(square: u8) -> Bitboard {
     let mut mask = Bitboard::EMPTY;
     for r in 1..7 {
         for f in 1..7 {
-            if (r as i32 - rank as i32).abs() == (f as i32 - file as i32).abs() && (r != rank || f != file) {
+            if (r as i32 - rank as i32).abs() == (f as i32 - file as i32).abs()
+                && (r != rank || f != file)
+            {
                 mask.set(r * 8 + f);
             }
         }
@@ -316,8 +362,8 @@ fn init_rook_magic(square: u8) -> MagicEntry {
         let index = (occ.0.wrapping_mul(magic) >> (64 - relevant_bits)) as usize;
         match attacks[index] {
             None => attacks[index] = Some(real_attacks),
-            Some(existing) if existing == real_attacks => {},
-            Some(_) => panic!("bad rook magic for square {square}: index {index} collides")
+            Some(existing) if existing == real_attacks => {}
+            Some(_) => panic!("bad rook magic for square {square}: index {index} collides"),
         };
     }
 
@@ -325,7 +371,10 @@ fn init_rook_magic(square: u8) -> MagicEntry {
         mask,
         magic,
         shift: 64 - relevant_bits,
-        attacks: attacks.into_iter().map(|a: Option<Bitboard>| a.unwrap_or_else(|| Bitboard::EMPTY)).collect(),
+        attacks: attacks
+            .into_iter()
+            .map(|a: Option<Bitboard>| a.unwrap_or(Bitboard::EMPTY))
+            .collect(),
     }
 }
 
@@ -342,8 +391,8 @@ fn init_bishop_magic(square: u8) -> MagicEntry {
         let index: usize = (occ.0.wrapping_mul(magic) >> (64 - relevant_bits)) as usize;
         match attacks[index] {
             None => attacks[index] = Some(real_attacks),
-            Some(existing) if existing == real_attacks => {},
-            Some(_) => panic!("bad bishop magic for square {square}: index {index} collides")
+            Some(existing) if existing == real_attacks => {}
+            Some(_) => panic!("bad bishop magic for square {square}: index {index} collides"),
         };
     }
 
@@ -351,7 +400,10 @@ fn init_bishop_magic(square: u8) -> MagicEntry {
         mask,
         magic,
         shift: 64 - relevant_bits,
-        attacks: attacks.into_iter().map(|a: Option<Bitboard>| a.unwrap_or_else(|| Bitboard::EMPTY)).collect(),
+        attacks: attacks
+            .into_iter()
+            .map(|a: Option<Bitboard>| a.unwrap_or(Bitboard::EMPTY))
+            .collect(),
     }
 }
 
@@ -364,10 +416,14 @@ pub(crate) fn sliding_attacks(square: u8, blockers: Bitboard, dirs: &[(i8, i8); 
         loop {
             r += dr;
             f += df;
-            if !(0..8).contains(&r) || !(0..8).contains(&f) { break; }
+            if !(0..8).contains(&r) || !(0..8).contains(&f) {
+                break;
+            }
             let sq = (r * 8 + f) as u8;
             attacks.set(sq);
-            if blockers.is_set(sq) { break; }
+            if blockers.is_set(sq) {
+                break;
+            }
         }
     }
 
@@ -391,10 +447,10 @@ fn _find_magic_numbers(square: u8, mask: Bitboard, dirs: &[(i8, i8); 4]) -> (u64
     let relevant_bits: u32 = mask.pop_count();
     let occupancies: Vec<Bitboard> = enumerate_subsets(mask);
     let attacks: Vec<Bitboard> = occupancies
-                                .iter()
-                                .map(|&occ| sliding_attacks(square, occ, dirs))
-                                .collect();
-    
+        .iter()
+        .map(|&occ| sliding_attacks(square, occ, dirs))
+        .collect();
+
     let mut seed: u64 = 0x9E37_79B9_7F4A_7C15u64 ^ (square as u64);
     loop {
         let magic: u64 = _xorshift64(&mut seed) & _xorshift64(&mut seed) & _xorshift64(&mut seed);
@@ -404,11 +460,16 @@ fn _find_magic_numbers(square: u8, mask: Bitboard, dirs: &[(i8, i8); 4]) -> (u64
             let index: usize = (occ.0.wrapping_mul(magic) >> (64 - relevant_bits)) as usize;
             match table[index] {
                 None => table[index] = Some(attacks[i]),
-                Some(existing) if existing == attacks[i] => {},
-                Some(_) => { ok = false; break; }
+                Some(existing) if existing == attacks[i] => {}
+                Some(_) => {
+                    ok = false;
+                    break;
+                }
             }
         }
-        if ok { return (magic, relevant_bits); }
+        if ok {
+            return (magic, relevant_bits);
+        }
     }
 }
 
