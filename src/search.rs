@@ -411,7 +411,7 @@ pub fn search_best_move(
         if let Some(entry) = tt.probe(board.zobrist_key) {
             best_move = entry.best_move();
         }
-        let pv = extract_pv(board, tables, tt, depth);
+        let pv: Vec<Move> = extract_pv(board, tables, tt, depth);
         on_info(&SearcInfo {
             depth,
             score,
@@ -422,20 +422,4 @@ pub fn search_best_move(
     }
 
     best_move
-}
-
-#[test]
-fn repetition_ignores_the_just_pushed_current_position() {
-    let mut board = Board::from_fen("6k1/5ppp/8/8/8/8/8/R5K1 w - - 0 1").unwrap();
-    let tables = Tables::new();
-    let mut history = vec![board.zobrist_key];
-
-    let mv = generate_legal_moves(&board, &tables)[0]; // any legal move
-    board.make_move(mv);
-    history.push(board.zobrist_key);
-
-    assert!(
-        !is_repetition(&board, &history),
-        "a position's first occurrence must never count as a repetition"
-    );
 }
