@@ -17,17 +17,20 @@ use crate::{
 };
 
 pub(crate) const MATE_VALUE: i32 = 30_000;
+pub(crate) const MATE_THRESHOLD: i32 = MATE_VALUE - 1000;
 const INFINITY: i32 = 32_000;
 
-pub(crate) const MATE_THRESHOLD: i32 = MATE_VALUE - 1000;
-
 const MVV_LVA_VALUES: [i32; 6] = [100, 320, 330, 500, 900, 10_000]; // Pawn, Knight, Bishop, Rook, Queen, King
+
+const MAX_PLY: usize = 128;
 
 pub struct SearchControl {
     deadline: Instant,
     stop: Arc<AtomicBool>,
     nodes: u64,
     aborted: bool,
+    killers: [[Move; 2]; MAX_PLY],
+    history_score: [[[i32; 64]; 64]; 2],
 }
 
 impl SearchControl {
@@ -37,6 +40,32 @@ impl SearchControl {
             stop,
             nodes: 0,
             aborted: false,
+            killers: [[Move::NULL; 2]; MAX_PLY],
+            history_score: [[[0; 64]; 64]; 2],
+        }
+    }
+
+    fn record_killer(&mut self, ply: u32, mv: Move) {
+        let ply: usize = ply as usize;
+        if ply >= MAX_PLY { return; }
+        
+        if self.killers[ply][0] != mv {
+            self.killers[ply][1] = self.killers[ply][0];
+            self.killers[ply][0] = mv;
+        }
+    }
+
+    fn record_history(&mut self, stm: Color, mv: Move, depth: u32) {
+        self.history_score[stm as usize][mv.from() as usize][mv.to() as usize] += (depth * depth) as i32;
+    }
+
+    pub fn decay_history(&mut self) {
+        for color_table in self.history_score.iter_mut() {
+            for row in color_table.iter_mut() {
+                for cell in row.iter_mut() {
+                    *cell /= 2;
+                }
+            }
         }
     }
 
@@ -88,35 +117,42 @@ fn score_from_tt(score: i32, ply: u32) -> i32 {
     }
 }
 
-fn score_move(mv: Move, board: &Board) -> i32 {
-    if !mv.flag().is_capture() {
-        return 0;
-    }
+fn score_move(mv: Move, board: &Board, ctrl: &mut SearchControl, ply: u32, hash_move: Option<Move>) -> i32 {
+    if Some(mv) == hash_move { return 1_000_000; }
     let stm: Color = board.side_to_move;
-    let opp: Color = stm.opposite();
 
-    let victim: PieceType = if mv.flag() == MoveFlag::EnPassant {
-        PieceType::Pawn
-    } else {
-        board
-            .piece_on(opp, mv.to())
-            .expect("Move has capture flag but no piece on to-square")
-    };
-    let attacker: PieceType = board
-        .piece_on(stm, mv.from())
-        .expect("No piece on from-square");
+    if mv.flag().is_capture() {
+        let opp: Color = stm.opposite();
 
-    10_000 + MVV_LVA_VALUES[victim as usize] * 10 - MVV_LVA_VALUES[attacker as usize]
+        let victim: PieceType = if mv.flag() == MoveFlag::EnPassant {
+            PieceType::Pawn
+        } else {
+            board
+                .piece_on(opp, mv.to())
+                .expect("Move has capture flag but no piece on to-square")
+        };
+        let attacker: PieceType = board
+            .piece_on(stm, mv.from())
+            .expect("No piece on from-square");
+
+        return 800_000 + MVV_LVA_VALUES[victim as usize] * 10 - MVV_LVA_VALUES[attacker as usize];
+    }
+
+    if mv.flag().promotion_piece() == Some(PieceType::Queen) {
+        return 700_000;
+    }
+
+    let ply_idx: usize = ply as usize;
+    if ply_idx < MAX_PLY {
+        if mv == ctrl.killers[ply_idx][0] { return 600_000; }
+        if mv == ctrl.killers[ply_idx][1] { return 599_000; }
+    }
+
+    ctrl.history_score[stm as usize][mv.from() as usize][mv.to() as usize]
 }
 
-fn order_moves(mut moves: Vec<Move>, board: &Board, hash_move: Option<Move>) -> Vec<Move> {
-    moves.sort_by_key(|&mv| {
-        if Some(mv) == hash_move {
-            Reverse(i32::MAX)
-        } else {
-            Reverse(score_move(mv, board))
-        }
-    });
+fn order_moves(mut moves: Vec<Move>, board: &Board, ctrl: &mut SearchControl, ply: u32, hash_move: Option<Move>) -> Vec<Move> {
+    moves.sort_by_key(|&mv| Reverse(score_move(mv, board, ctrl, ply, hash_move)));
     moves
 }
 
@@ -186,21 +222,21 @@ fn negamax(
     let mut best_move: Move = moves[0];
     let mut best_score: i32 = -INFINITY;
 
-    for mv in order_moves(moves, board, hash_move) {
+    for (i, mv) in order_moves(moves, board, ctrl, ply, hash_move).into_iter().enumerate() {
         let undo: UndoInfo = board.make_move(mv);
         history.push(board.zobrist_key);
 
-        let score: i32 = -negamax(
-            board,
-            tables,
-            tt,
-            history,
-            ctrl,
-            depth - 1,
-            ply + 1,
-            -beta,
-            -alpha,
-        );
+        let score: i32 = if i == 0 {
+            -negamax(board, tables, tt, history, ctrl, depth - 1, ply + 1, -beta, -alpha)
+        } else {
+            let probe: i32 = -negamax(board, tables, tt, history, ctrl, depth - 1, ply + 1, -alpha - 1, -alpha);
+            if probe > alpha && probe < beta {
+                -negamax(board, tables, tt, history, ctrl, depth - 1, ply + 1, -beta, -alpha)
+            } else {
+                probe
+            }
+        };
+        
         history.pop();
         board.unmake_move(mv, undo);
 
@@ -214,6 +250,10 @@ fn negamax(
         }
         alpha = alpha.max(best_score);
         if alpha >= beta {
+            if !mv.flag().is_capture() {
+                ctrl.record_killer(ply, mv);
+                ctrl.record_history(board.side_to_move, mv, depth);
+            }
             break;
         }
     }
@@ -307,7 +347,7 @@ fn quiescence(
             .collect()
     };
 
-    for mv in order_moves(candidates, board, tt_entry.map(|e: TTEntry| e.best_move())) {
+    for mv in order_moves(candidates, board, ctrl, ply, tt_entry.map(|e: TTEntry| e.best_move())) {
         let undo: UndoInfo = board.make_move(mv);
         let score: i32 = -quiescence(board, tables, tt, ctrl, ply + 1, -beta, -alpha);
         board.unmake_move(mv, undo);
