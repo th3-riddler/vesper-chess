@@ -31,8 +31,8 @@ jobs:
           - name: macOS Intel
             os: macos-15-intel
             target: x86_64-apple-darwin
-            binary: moss
-            archive: moss-${{ github.ref_name }}-macos-x86_64.tar.gz
+            binary: vesper
+            archive: vesper-${{ github.ref_name }}-macos-x86_64.tar.gz
 
           - name: macOS Apple Silicon
             os: macos-latest
