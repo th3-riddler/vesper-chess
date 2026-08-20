@@ -1,19 +1,25 @@
+/*  =======================
+         Move ordering
+    =======================
+    
+    1. PV move
+    2. Captures in MVV/LVA
+    3. Queen Promotions
+    4. 1st killer move
+    5. 2nd killer move
+    6. History moves
+    7. Unsorted moves
+*/
+
 use std::{
-    cmp::Reverse,
-    sync::{
+    cmp::Reverse, sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
-    },
-    time::Instant,
+    }, time::Instant,
 };
 
 use crate::{
-    attacks::Tables,
-    bitboard::{Color, PieceType},
-    board::Board,
-    eval::evaluate,
-    moves::{Move, MoveFlag, UndoInfo, generate_legal_moves, is_in_check},
-    tt::{Bound, TTEntry, TranspositionTable},
+    attacks::Tables, bitboard::{Bitboard, Color, PieceType}, board::{Board, NullMoveUndo}, eval::evaluate, moves::{Move, MoveFlag, UndoInfo, generate_legal_moves, is_in_check}, tt::{Bound, TTEntry, TranspositionTable},
 };
 
 pub(crate) const MATE_VALUE: i32 = 30_000;
@@ -23,6 +29,9 @@ const INFINITY: i32 = 32_000;
 const MVV_LVA_VALUES: [i32; 6] = [100, 320, 330, 500, 900, 10_000]; // Pawn, Knight, Bishop, Rook, Queen, King
 
 const MAX_PLY: usize = 128;
+
+const NULL_MOVE_MIN_DEPTH: u32 = 3;
+const NULL_MOVE_REDUCTION: u32 = 2;
 
 pub struct SearchControl {
     deadline: Instant,
@@ -156,6 +165,12 @@ fn order_moves(mut moves: Vec<Move>, board: &Board, ctrl: &mut SearchControl, pl
     moves
 }
 
+fn has_non_pawn_material(board: &Board, stm: Color) -> bool {
+    [PieceType::Knight, PieceType::Bishop, PieceType::Rook, PieceType::Queen]
+        .iter()
+        .any(|&pt| board.pieces[stm as usize][pt as usize] != Bitboard::EMPTY)
+}
+
 fn is_repetition(board: &Board, history: &[u64]) -> bool {
     let limit: usize = board.halfmove_clock as usize;
     history
@@ -208,6 +223,28 @@ fn negamax(
         return quiescence(board, tables, tt, ctrl, ply, alpha, beta);
     }
 
+    // Null Move Pruning
+    let in_check: bool = is_in_check(board, tables);
+    
+    if !in_check
+        && ply > 0
+        && depth >= NULL_MOVE_MIN_DEPTH
+        && beta < MATE_THRESHOLD
+        && has_non_pawn_material(board, board.side_to_move)
+    {
+        let undo: NullMoveUndo = board.make_null_move();
+        history.push(board.zobrist_key);
+
+        let score: i32 = -negamax(board, tables, tt, history, ctrl, depth - 1 - NULL_MOVE_REDUCTION, ply + 1, -beta, -beta + 1);
+        history.pop();
+        board.unmake_null_move(undo);
+
+        if ctrl.is_aborted() { return alpha; }
+        if score >= beta {
+            return beta;
+        }
+    }
+
     let moves: Vec<Move> = generate_legal_moves(board, tables);
     if moves.is_empty() {
         return if is_in_check(board, tables) {
@@ -226,6 +263,7 @@ fn negamax(
         let undo: UndoInfo = board.make_move(mv);
         history.push(board.zobrist_key);
 
+        // PVS with Null Window
         let score: i32 = if i == 0 {
             -negamax(board, tables, tt, history, ctrl, depth - 1, ply + 1, -beta, -alpha)
         } else {

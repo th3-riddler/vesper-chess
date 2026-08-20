@@ -17,6 +17,11 @@ pub struct Board {
     pub zobrist_key: u64,
 }
 
+pub struct NullMoveUndo {
+    en_passant: Option<u8>,
+    zobrist_key: u64,
+}
+
 impl Board {
     pub fn occupancy(&self, color: Color) -> Bitboard {
         self.pieces[color as usize]
@@ -238,6 +243,29 @@ impl Board {
         let (rook_from, rook_to) = _castle_rook_squares(stm, kingside);
         self.pieces[stm as usize][PieceType::Rook as usize].0 &= !(1u64 << rook_to);
         self.pieces[stm as usize][PieceType::Rook as usize].0 |= 1u64 << rook_from;
+    }
+
+    pub fn make_null_move(&mut self) -> NullMoveUndo {
+        let undo: NullMoveUndo = NullMoveUndo {
+            en_passant: self.en_passant,
+            zobrist_key: self.zobrist_key
+        };
+        let keys: &ZobristKeys = keys();
+
+        if let Some(ep) = self.en_passant {
+            self.zobrist_key ^= keys.en_passant_file(ep % 8);
+        }
+        self.en_passant = None;
+        self.side_to_move = self.side_to_move.opposite();
+        self.zobrist_key ^= keys.side_to_move();
+
+        undo
+    }
+
+    pub fn unmake_null_move(&mut self, undo: NullMoveUndo) {
+        self.side_to_move = self.side_to_move.opposite();
+        self.en_passant = undo.en_passant;
+        self.zobrist_key = undo.zobrist_key;
     }
 
     pub fn is_insufficient_material(&self) -> bool {
