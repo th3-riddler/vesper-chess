@@ -156,6 +156,10 @@ const BAD_CAPUTRE_BASE: i32 = -1_000_000;
 const LMR_MIN_DEPTH: u32 = 3;
 const LMR_MIN_MOVE_INDEX: usize = 3;
 
+// After this depth, disable Futility Pruning
+const FUTILITY_MAX_DEPTH: u32 = 8;
+const FUTILITY_MARGIN_PER_DEPTH: i32 = 100;
+
 fn score_move(mv: Move, board: &Board, tables: &Tables, ctrl: &mut SearchControl, ply: u32, hash_move: Option<Move>) -> i32 {
     if Some(mv) == hash_move { return HASH_MOVE_SCORE; }
     let stm: Color = board.side_to_move;
@@ -248,9 +252,9 @@ fn negamax(
         return quiescence(board, tables, tt, ctrl, ply, alpha, beta);
     }
 
-    // Null Move Pruning
     let in_check: bool = is_in_check(board, tables);
     
+    // Null Move Pruning
     if !in_check
         && ply > 0
         && !pv_node
@@ -275,6 +279,16 @@ fn negamax(
         }
     }
 
+    let static_eval: i32 = evaluate(board);
+    
+    // Futility Pruning Node-Level
+    if !in_check && !pv_node && depth <= FUTILITY_MAX_DEPTH && beta < MATE_THRESHOLD {
+        let margin: i32 = FUTILITY_MARGIN_PER_DEPTH * depth as i32;
+        if static_eval - margin >= beta {
+            return static_eval - margin;
+        }
+    }
+
     let moves: Vec<Move> = generate_legal_moves(board, tables);
     if moves.is_empty() {
         return if is_in_check(board, tables) {
@@ -289,8 +303,21 @@ fn negamax(
     let mut best_move: Move = moves[0];
     let mut best_score: i32 = -INFINITY;
 
+
     for (i, mv) in order_moves(moves, board, tables, ctrl, ply, hash_move).into_iter().enumerate() {
         let is_quiet: bool = !mv.flag().is_capture() && mv.flag().promotion_piece().is_none();
+
+        // Futility Pruning Move-Level
+        if is_quiet
+            && !in_check
+            && !pv_node
+            && depth <= FUTILITY_MAX_DEPTH
+            && i > 0
+            && static_eval + FUTILITY_MARGIN_PER_DEPTH * depth as i32 <= alpha
+            && best_score > -MATE_THRESHOLD
+        {
+            continue;
+        }
 
         let undo: UndoInfo = board.make_move(mv);
         history.push(board.zobrist_key);
