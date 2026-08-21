@@ -12,8 +12,7 @@
 */
 
 use std::{
-    cmp::Reverse,
-    sync::{
+    cmp::{Reverse, min}, sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
     }, time::Instant,
@@ -110,6 +109,23 @@ pub struct SearcInfo {
     pub pv: Vec<Move>,
 }
 
+pub struct LMRTable {
+    table: [[u32; 64]; 64],
+}
+
+impl LMRTable {
+    pub fn new() -> Self {
+        let mut lmr_table: [[u32; 64]; 64] = [[0; 64]; 64];
+        lmr_table[0][0] = 0;
+        for depth in 1..64 {
+            for move_index in 1..64 {
+                lmr_table[depth][move_index] = (0.75 + (depth as f64).ln() * (move_index as f64).ln() / 2.25) as u32;
+            }
+        }
+        LMRTable { table: lmr_table }
+    }
+}
+
 fn score_to_tt(score: i32, ply: u32) -> i32 {
     if score >= MATE_THRESHOLD {
         score + ply as i32
@@ -187,17 +203,11 @@ fn null_move_reduction(depth: u32) -> u32 {
     3 + depth / 6
 }
 
-fn lmr_reduction(depth: u32, move_index: usize) -> u32 {
-    let d: f64 = (depth as f64).ln();
-    let m: f64 = (move_index as f64).ln();
-
-    (0.75 + d * m / 2.25) as u32
-}
-
 fn negamax(
     board: &mut Board,
     tables: &Tables,
     tt: &mut TranspositionTable,
+    lmr_table: &LMRTable,
     history: &mut Vec<u64>,
     ctrl: &mut SearchControl,
     depth: u32,
@@ -254,7 +264,7 @@ fn negamax(
         // Dynamic Null Move Pruning
         let reduction: u32 = null_move_reduction(depth);
         let reduced_depth: u32 = depth.saturating_sub(1 + reduction);
-        let score: i32 = -negamax(board, tables, tt, history, ctrl, reduced_depth, ply + 1, -beta, -beta + 1);
+        let score: i32 = -negamax(board, tables, tt, lmr_table, history, ctrl, reduced_depth, ply + 1, -beta, -beta + 1);
         
         history.pop();
         board.unmake_null_move(undo);
@@ -287,7 +297,7 @@ fn negamax(
 
         // PVS with Null Window
         let score: i32 = if i == 0 {
-            -negamax(board, tables, tt, history, ctrl, depth - 1, ply + 1, -beta, -alpha)
+            -negamax(board, tables, tt, lmr_table, history, ctrl, depth - 1, ply + 1, -beta, -alpha)
         } else {
             // Late Move Reduction
             let gives_check: bool = is_in_check(board, tables);
@@ -298,19 +308,21 @@ fn negamax(
                 && depth >= LMR_MIN_DEPTH
                 && i >= LMR_MIN_MOVE_INDEX
             {
-                lmr_reduction(depth, i)
+                let d: usize = min(depth, 63) as usize;
+                let m: usize = min(i, 63);
+                lmr_table.table[d][m]
             } else {
                 0
             };
             let reduced_depth: u32 = depth.saturating_sub(1 + reduction);
-            let mut probe: i32 = -negamax(board, tables, tt, history, ctrl, reduced_depth, ply + 1, -alpha - 1, -alpha);
+            let mut probe: i32 = -negamax(board, tables, tt, lmr_table, history, ctrl, reduced_depth, ply + 1, -alpha - 1, -alpha);
 
             if reduction > 0 && probe > alpha {
-                probe = -negamax(board, tables, tt, history, ctrl, depth - 1, ply + 1, -alpha - 1, -alpha);
+                probe = -negamax(board, tables, tt, lmr_table, history, ctrl, depth - 1, ply + 1, -alpha - 1, -alpha);
             }
 
             if probe > alpha && probe < beta {
-                -negamax(board, tables, tt, history, ctrl, depth - 1, ply + 1, -beta, -alpha)
+                -negamax(board, tables, tt, lmr_table, history, ctrl, depth - 1, ply + 1, -beta, -alpha)
             } else {
                 probe
             }
@@ -510,6 +522,7 @@ pub fn search_best_move(
     board: &mut Board,
     tables: &Tables,
     tt: &mut TranspositionTable,
+    lmr_table: &LMRTable,
     history: &mut Vec<u64>,
     ctrl: &mut SearchControl,
     max_depth: Option<u32>,
@@ -529,7 +542,7 @@ pub fn search_best_move(
             break;
         }
         let score: i32 = negamax(
-            board, tables, tt, history, ctrl, depth, 0, -INFINITY, INFINITY,
+            board, tables, tt, lmr_table, history, ctrl, depth, 0, -INFINITY, INFINITY,
         );
         if ctrl.is_aborted() {
             break;

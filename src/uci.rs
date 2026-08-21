@@ -10,12 +10,7 @@ use std::{
 };
 
 use crate::{
-    attacks::Tables,
-    bitboard::{Color, PieceType},
-    board::Board,
-    moves::{Move, MoveFlag, generate_legal_moves},
-    search::{MATE_THRESHOLD, MATE_VALUE, SearcInfo, SearchControl, search_best_move},
-    tt::TranspositionTable,
+    attacks::Tables, bitboard::{Color, PieceType}, board::Board, moves::{Move, MoveFlag, generate_legal_moves}, search::{LMRTable, MATE_THRESHOLD, MATE_VALUE, SearcInfo, SearchControl, search_best_move}, tt::TranspositionTable,
 };
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -211,8 +206,8 @@ pub fn uci_loop() {
     let tables: Arc<Tables> = Arc::new(Tables::new());
     let tt: Arc<Mutex<TranspositionTable>> = Arc::new(Mutex::new(TranspositionTable::new(64))); // 64 MB default
     let board: Arc<Mutex<Board>> = Arc::new(Mutex::new(Board::start_position().unwrap()));
-    let history: Arc<Mutex<Vec<u64>>> =
-        Arc::new(Mutex::new(vec![board.lock().unwrap().zobrist_key]));
+    let history: Arc<Mutex<Vec<u64>>> = Arc::new(Mutex::new(vec![board.lock().unwrap().zobrist_key]));
+    let lmr_table: Arc<Mutex<LMRTable>> = Arc::new(Mutex::new(LMRTable::new()));
     let stop_flag: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
     let mut search_handle: Option<thread::JoinHandle<()>> = None;
 
@@ -242,10 +237,11 @@ pub fn uci_loop() {
             Some("go") => {
                 stop_flag.store(false, Ordering::Relaxed);
                 let params: GoParams = parse_go_command(tokens);
-                let (board, tables, tt, history, stop_flag) = (
+                let (board, tables, tt, lmr_table, history, stop_flag) = (
                     Arc::clone(&board),
                     Arc::clone(&tables),
                     Arc::clone(&tt),
+                    Arc::clone(&lmr_table),
                     Arc::clone(&history),
                     Arc::clone(&stop_flag),
                 );
@@ -256,11 +252,13 @@ pub fn uci_loop() {
                     let mut ctrl: SearchControl = SearchControl::new(deadline, stop_flag);
                     let mut tt: MutexGuard<'_, TranspositionTable> = tt.lock().unwrap();
                     let mut history: MutexGuard<'_, Vec<u64>> = history.lock().unwrap();
+                    let lmr_table: MutexGuard<'_, LMRTable> = lmr_table.lock().unwrap();
 
                     let best: Move = search_best_move(
                         &mut board,
                         &tables,
                         &mut tt,
+                        &lmr_table,
                         &mut history,
                         &mut ctrl,
                         max_depth,
