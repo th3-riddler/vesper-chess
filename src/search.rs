@@ -137,6 +137,9 @@ const KILLER_1_SCORE: i32 = 1_300_000;
 const KILLER_2_SCORE: i32 = 1_299_000;
 const BAD_CAPUTRE_BASE: i32 = -1_000_000;
 
+const LMR_MIN_DEPTH: u32 = 3;
+const LMR_MIN_MOVE_INDEX: usize = 3;
+
 fn score_move(mv: Move, board: &Board, tables: &Tables, ctrl: &mut SearchControl, ply: u32, hash_move: Option<Move>) -> i32 {
     if Some(mv) == hash_move { return HASH_MOVE_SCORE; }
     let stm: Color = board.side_to_move;
@@ -180,6 +183,17 @@ fn is_repetition(board: &Board, history: &[u64]) -> bool {
         .any(|&k| k == board.zobrist_key)
 }
 
+fn null_move_reduction(depth: u32) -> u32 {
+    3 + depth / 6
+}
+
+fn lmr_reduction(depth: u32, move_index: usize) -> u32 {
+    let d: f64 = (depth as f64).ln();
+    let m: f64 = (move_index as f64).ln();
+
+    (0.75 + d * m / 2.25) as u32
+}
+
 fn negamax(
     board: &mut Board,
     tables: &Tables,
@@ -203,12 +217,14 @@ fn negamax(
         return 0;
     }
 
+    let pv_node: bool = beta - alpha > 1; 
+
     let tt_entry: Option<TTEntry> = tt.probe(board.zobrist_key);
     if let Some(entry) = tt_entry
         && entry.depth() as u32 >= depth
     {
         let score: i32 = score_from_tt(entry.score(), ply);
-        let cutoff = match entry.bound() {
+        let cutoff: bool = match entry.bound() {
             Bound::Exact => true,
             Bound::Lower => score >= beta,
             Bound::Upper => score <= alpha,
@@ -227,6 +243,7 @@ fn negamax(
     
     if !in_check
         && ply > 0
+        && !pv_node
         && depth >= NULL_MOVE_MIN_DEPTH
         && beta < MATE_THRESHOLD
         && has_non_pawn_material(board, board.side_to_move)
@@ -235,7 +252,7 @@ fn negamax(
         history.push(board.zobrist_key);
 
         // Dynamic Null Move Pruning
-        let reduction: u32 = 3 + depth / 6;
+        let reduction: u32 = null_move_reduction(depth);
         let reduced_depth: u32 = depth.saturating_sub(1 + reduction);
         let score: i32 = -negamax(board, tables, tt, history, ctrl, reduced_depth, ply + 1, -beta, -beta + 1);
         
@@ -263,6 +280,8 @@ fn negamax(
     let mut best_score: i32 = -INFINITY;
 
     for (i, mv) in order_moves(moves, board, tables, ctrl, ply, hash_move).into_iter().enumerate() {
+        let is_quiet: bool = !mv.flag().is_capture() && mv.flag().promotion_piece().is_none();
+
         let undo: UndoInfo = board.make_move(mv);
         history.push(board.zobrist_key);
 
@@ -270,7 +289,26 @@ fn negamax(
         let score: i32 = if i == 0 {
             -negamax(board, tables, tt, history, ctrl, depth - 1, ply + 1, -beta, -alpha)
         } else {
-            let probe: i32 = -negamax(board, tables, tt, history, ctrl, depth - 1, ply + 1, -alpha - 1, -alpha);
+            // Late Move Reduction
+            let gives_check: bool = is_in_check(board, tables);
+            let reduction: u32 = if is_quiet
+                && !pv_node
+                && !in_check
+                && !gives_check
+                && depth >= LMR_MIN_DEPTH
+                && i >= LMR_MIN_MOVE_INDEX
+            {
+                lmr_reduction(depth, i)
+            } else {
+                0
+            };
+            let reduced_depth: u32 = depth.saturating_sub(1 + reduction);
+            let mut probe: i32 = -negamax(board, tables, tt, history, ctrl, reduced_depth, ply + 1, -alpha - 1, -alpha);
+
+            if reduction > 0 && probe > alpha {
+                probe = -negamax(board, tables, tt, history, ctrl, depth - 1, ply + 1, -alpha - 1, -alpha);
+            }
+
             if probe > alpha && probe < beta {
                 -negamax(board, tables, tt, history, ctrl, depth - 1, ply + 1, -beta, -alpha)
             } else {
