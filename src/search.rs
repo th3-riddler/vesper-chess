@@ -16,8 +16,7 @@ use std::{
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
-    },
-    time::Instant,
+    }, time::Instant,
 };
 
 use crate::{
@@ -37,7 +36,6 @@ const INFINITY: i32 = 32_000;
 const MAX_PLY: usize = 128;
 
 const NULL_MOVE_MIN_DEPTH: u32 = 3;
-const NULL_MOVE_REDUCTION: u32 = 2;
 
 pub struct SearchControl {
     deadline: Instant,
@@ -236,7 +234,11 @@ fn negamax(
         let undo: NullMoveUndo = board.make_null_move();
         history.push(board.zobrist_key);
 
-        let score: i32 = -negamax(board, tables, tt, history, ctrl, depth - 1 - NULL_MOVE_REDUCTION, ply + 1, -beta, -beta + 1);
+        // Dynamic Null Move Pruning
+        let reduction: u32 = 3 + depth / 6;
+        let reduced_depth: u32 = depth.saturating_sub(1 + reduction);
+        let score: i32 = -negamax(board, tables, tt, history, ctrl, reduced_depth, ply + 1, -beta, -beta + 1);
+        
         history.pop();
         board.unmake_null_move(undo);
 
@@ -379,7 +381,7 @@ fn quiescence(
 
     const QSEARCH_SEE_MARGIN: i32 = -100;
 
-    // Currently, moves are ordered by SEE, not filtering out bad captures because of potential illegal evaluations (pinned pieces, discovered checks, etc.)
+    // Currently, moves are ordered by SEE >= QSEARCH_SEE_MARGIN, filtering out only unambiguously bad captures.
     let candidates: Vec<Move> = if in_check {
         all_moves
     } else {
