@@ -1,6 +1,4 @@
-use std::ops::BitAnd;
-use std::ops::BitOr;
-use std::ops::Not;
+use std::ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign, BitXor, BitXorAssign, Not};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
@@ -69,6 +67,12 @@ impl BitOr for Bitboard {
     }
 }
 
+impl BitOrAssign for Bitboard {
+    fn bitor_assign(&mut self, rhs: Bitboard) {
+        self.0 |= rhs.0;
+    }
+}
+
 impl BitAnd for Bitboard {
     type Output = Bitboard;
 
@@ -77,11 +81,31 @@ impl BitAnd for Bitboard {
     }
 }
 
+impl BitAndAssign for Bitboard {
+    fn bitand_assign(&mut self, rhs: Bitboard) {
+        self.0 &= rhs.0;
+    }
+}
+
 impl Not for Bitboard {
     type Output = Bitboard;
 
     fn not(self) -> Bitboard {
         Bitboard(!self.0)
+    }
+}
+
+impl BitXor for Bitboard {
+    type Output = Bitboard;
+
+    fn bitxor(self, rhs: Self) -> Bitboard {
+        Bitboard(self.0 ^ rhs.0)
+    }
+}
+
+impl BitXorAssign for Bitboard {
+    fn bitxor_assign(&mut self, rhs: Self) {
+        self.0 ^= rhs.0;
     }
 }
 

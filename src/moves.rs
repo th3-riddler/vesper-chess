@@ -149,7 +149,8 @@ pub fn is_in_check(board: &Board, tables: &Tables) -> bool {
 }
 
 /* Compute the bitboard of all pieces that are checking the king of the side to move. */
-fn compute_checkers(board: &Board, tables: &Tables, king_sq: u8, stm: Color) -> Bitboard {
+#[inline]
+pub(crate) fn compute_checkers(board: &Board, tables: &Tables, king_sq: u8, stm: Color) -> Bitboard {
     let opp: Color = stm.opposite();
     let occ: Bitboard = board.all_occupancy();
     let enemy: &[Bitboard; 6] = &board.pieces[opp as usize];

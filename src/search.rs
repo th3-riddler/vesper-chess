@@ -3,7 +3,7 @@
     =======================
     
     1. PV move
-    2. Captures in MVV/LVA
+    2. SEE
     3. Queen Promotions
     4. 1st killer move
     5. 2nd killer move
@@ -12,21 +12,27 @@
 */
 
 use std::{
-    cmp::Reverse, sync::{
+    cmp::Reverse,
+    sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
-    }, time::Instant,
+    },
+    time::Instant,
 };
 
 use crate::{
-    attacks::Tables, bitboard::{Bitboard, Color, PieceType}, board::{Board, NullMoveUndo}, eval::evaluate, moves::{Move, MoveFlag, UndoInfo, generate_legal_moves, is_in_check}, tt::{Bound, TTEntry, TranspositionTable},
+    attacks::Tables,
+    bitboard::{Bitboard, Color, PieceType},
+    board::{Board, NullMoveUndo},
+    eval::evaluate,
+    moves::{Move, UndoInfo, generate_legal_moves, is_in_check},
+    see::see,
+    tt::{Bound, TTEntry, TranspositionTable},
 };
 
 pub(crate) const MATE_VALUE: i32 = 30_000;
 pub(crate) const MATE_THRESHOLD: i32 = MATE_VALUE - 1000;
 const INFINITY: i32 = 32_000;
-
-const MVV_LVA_VALUES: [i32; 6] = [100, 320, 330, 500, 900, 10_000]; // Pawn, Knight, Bishop, Rook, Queen, King
 
 const MAX_PLY: usize = 128;
 
@@ -126,42 +132,37 @@ fn score_from_tt(score: i32, ply: u32) -> i32 {
     }
 }
 
-fn score_move(mv: Move, board: &Board, ctrl: &mut SearchControl, ply: u32, hash_move: Option<Move>) -> i32 {
-    if Some(mv) == hash_move { return 1_000_000; }
+const HASH_MOVE_SCORE: i32 = 2_000_000;
+const GOOD_CAPTURE_BASE: i32 = 1_500_000;
+const QUEEN_PROMOTION_SCORE: i32 = 1_400_000;
+const KILLER_1_SCORE: i32 = 1_300_000;
+const KILLER_2_SCORE: i32 = 1_299_000;
+const BAD_CAPUTRE_BASE: i32 = -1_000_000;
+
+fn score_move(mv: Move, board: &Board, tables: &Tables, ctrl: &mut SearchControl, ply: u32, hash_move: Option<Move>) -> i32 {
+    if Some(mv) == hash_move { return HASH_MOVE_SCORE; }
     let stm: Color = board.side_to_move;
 
     if mv.flag().is_capture() {
-        let opp: Color = stm.opposite();
-
-        let victim: PieceType = if mv.flag() == MoveFlag::EnPassant {
-            PieceType::Pawn
-        } else {
-            board
-                .piece_on(opp, mv.to())
-                .expect("Move has capture flag but no piece on to-square")
-        };
-        let attacker: PieceType = board
-            .piece_on(stm, mv.from())
-            .expect("No piece on from-square");
-
-        return 800_000 + MVV_LVA_VALUES[victim as usize] * 10 - MVV_LVA_VALUES[attacker as usize];
+        let value: i32 = see(board, tables, mv);
+        return if value >= 0 { GOOD_CAPTURE_BASE + value } else { BAD_CAPUTRE_BASE + value };
     }
 
     if mv.flag().promotion_piece() == Some(PieceType::Queen) {
-        return 700_000;
+        return QUEEN_PROMOTION_SCORE;
     }
 
     let ply_idx: usize = ply as usize;
     if ply_idx < MAX_PLY {
-        if mv == ctrl.killers[ply_idx][0] { return 600_000; }
-        if mv == ctrl.killers[ply_idx][1] { return 599_000; }
+        if mv == ctrl.killers[ply_idx][0] { return KILLER_1_SCORE; }
+        if mv == ctrl.killers[ply_idx][1] { return KILLER_2_SCORE; }
     }
 
     ctrl.history_score[stm as usize][mv.from() as usize][mv.to() as usize]
 }
 
-fn order_moves(mut moves: Vec<Move>, board: &Board, ctrl: &mut SearchControl, ply: u32, hash_move: Option<Move>) -> Vec<Move> {
-    moves.sort_by_key(|&mv| Reverse(score_move(mv, board, ctrl, ply, hash_move)));
+fn order_moves(mut moves: Vec<Move>, board: &Board, tables: &Tables, ctrl: &mut SearchControl, ply: u32, hash_move: Option<Move>) -> Vec<Move> {
+    moves.sort_by_key(|&mv| Reverse(score_move(mv, board, tables, ctrl, ply, hash_move)));
     moves
 }
 
@@ -259,7 +260,7 @@ fn negamax(
     let mut best_move: Move = moves[0];
     let mut best_score: i32 = -INFINITY;
 
-    for (i, mv) in order_moves(moves, board, ctrl, ply, hash_move).into_iter().enumerate() {
+    for (i, mv) in order_moves(moves, board, tables, ctrl, ply, hash_move).into_iter().enumerate() {
         let undo: UndoInfo = board.make_move(mv);
         history.push(board.zobrist_key);
 
@@ -376,16 +377,24 @@ fn quiescence(
         return score;
     }
 
+    const QSEARCH_SEE_MARGIN: i32 = -100;
+
+    // Currently, moves are ordered by SEE, not filtering out bad captures because of potential illegal evaluations (pinned pieces, discovered checks, etc.)
     let candidates: Vec<Move> = if in_check {
         all_moves
     } else {
-        all_moves
+        let mut captures: Vec<(Move, i32)> = all_moves
             .into_iter()
             .filter(|mv: &Move| mv.flag().is_capture())
-            .collect()
+            .map(|mv: Move| (mv, see(board, tables, mv)))
+            .filter(|&(_, score)| score >= QSEARCH_SEE_MARGIN)
+            .collect();
+        
+        captures.sort_by_key(|&(_, score)| Reverse(score));
+        captures.into_iter().map(|(mv, _)| mv).collect()
     };
 
-    for mv in order_moves(candidates, board, ctrl, ply, tt_entry.map(|e: TTEntry| e.best_move())) {
+    for mv in candidates {
         let undo: UndoInfo = board.make_move(mv);
         let score: i32 = -quiescence(board, tables, tt, ctrl, ply + 1, -beta, -alpha);
         board.unmake_move(mv, undo);

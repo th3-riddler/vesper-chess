@@ -1,4 +1,9 @@
-use vesper::{attacks::Tables, board::Board, moves::generate_legal_moves};
+use vesper::{
+    attacks::Tables,
+    board::Board,
+    moves::{generate_legal_moves, Move, MoveFlag},
+    see::see,
+};
 
 #[test]
 fn detects_diagonal_pawn_pin() {
@@ -56,4 +61,13 @@ fn zobrist_incremental_matches_from_scratch() {
         Board::from_fen("r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1")
             .unwrap();
     check(&mut board, &Tables::new(), 3);
+}
+
+#[test]
+fn see_stops_after_the_last_recapture() {
+    let board = Board::from_fen("4k3/8/4p3/3p4/3Q4/8/8/4K3 w - - 0 1").unwrap();
+    let tables = Tables::new();
+    let queen_captures_pawn = Move::new(27, 35, MoveFlag::Capture);
+
+    assert_eq!(see(&board, &tables, queen_captures_pawn), -800);
 }
