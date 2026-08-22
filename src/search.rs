@@ -564,20 +564,40 @@ pub fn search_best_move(
     let mut best_move: Move = root_moves[0];
     let start: Instant = Instant::now();
 
+    let mut score: i32 = 0;
     for depth in 1..=max_depth.unwrap_or(u32::MAX) {
         if ctrl.stop.load(Ordering::Relaxed) || Instant::now() >= ctrl.deadline {
             break;
         }
-        let score: i32 = negamax(
-            board, tables, tt, lmr_table, history, ctrl, depth, 0, -INFINITY, INFINITY,
-        );
-        if ctrl.is_aborted() {
-            break;
+
+        let mut window: i32 = 50;
+        let (mut alpha, mut beta) = if depth <= 2 {
+            (-INFINITY, INFINITY)
+        } else {
+            (score - window, score + window)
+        };
+
+        loop {
+            score = negamax(board, tables, tt, lmr_table, history, ctrl, depth, 0, alpha, beta);
+            if ctrl.is_aborted() { break; }
+
+            if score <= alpha {
+                alpha = (alpha - window).max(-INFINITY);
+                window *= 4;
+            } else if score >= beta {
+                beta = (beta + window).min(INFINITY);
+                window *= 4;
+            } else {
+                break;
+            }
         }
+
+        if ctrl.is_aborted() { break; }
 
         if let Some(entry) = tt.probe(board.zobrist_key) {
             best_move = entry.best_move();
         }
+
         let pv: Vec<Move> = extract_pv(board, tables, tt, depth);
         on_info(&SearcInfo {
             depth,
