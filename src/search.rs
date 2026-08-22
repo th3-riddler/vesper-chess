@@ -160,6 +160,10 @@ const LMR_MIN_MOVE_INDEX: usize = 3;
 const FUTILITY_MAX_DEPTH: u32 = 8;
 const FUTILITY_MARGIN_PER_DEPTH: i32 = 100;
 
+const RAZOR_MAX_DEPTH: u32 = 3;
+
+const MAX_EXTENSIONS_PER_PATH: u32 = 8;
+
 fn score_move(mv: Move, board: &Board, tables: &Tables, ctrl: &mut SearchControl, ply: u32, hash_move: Option<Move>) -> i32 {
     if Some(mv) == hash_move { return HASH_MOVE_SCORE; }
     let stm: Color = board.side_to_move;
@@ -207,6 +211,10 @@ fn null_move_reduction(depth: u32) -> u32 {
     3 + depth / 6
 }
 
+fn razor_margin(depth: u32) -> i32 {
+    200 + 150 * depth as i32
+}
+
 fn negamax(
     board: &mut Board,
     tables: &Tables,
@@ -216,6 +224,7 @@ fn negamax(
     ctrl: &mut SearchControl,
     depth: u32,
     ply: u32,
+    extensions_used: u32,
     mut alpha: i32,
     beta: i32,
 ) -> i32 {
@@ -268,7 +277,7 @@ fn negamax(
         // Dynamic Null Move Pruning
         let reduction: u32 = null_move_reduction(depth);
         let reduced_depth: u32 = depth.saturating_sub(1 + reduction);
-        let score: i32 = -negamax(board, tables, tt, lmr_table, history, ctrl, reduced_depth, ply + 1, -beta, -beta + 1);
+        let score: i32 = -negamax(board, tables, tt, lmr_table, history, ctrl, reduced_depth, ply + 1, extensions_used, -beta, -beta + 1);
         
         history.pop();
         board.unmake_null_move(undo);
@@ -280,6 +289,17 @@ fn negamax(
     }
 
     let static_eval: i32 = evaluate(board);
+
+    // Razoring
+    if !in_check && !pv_node && depth <= RAZOR_MAX_DEPTH && beta < MATE_THRESHOLD {
+        let margin: i32 = razor_margin(depth);
+        if static_eval + margin <= alpha {
+            let razor_score: i32 = quiescence(board, tables, tt, ctrl, ply, alpha, beta);
+            if razor_score <= alpha {
+                return razor_score;
+            }
+        }
+    }
     
     // Futility Pruning Node-Level
     if !in_check && !pv_node && depth <= FUTILITY_MAX_DEPTH && beta < MATE_THRESHOLD {
@@ -303,7 +323,6 @@ fn negamax(
     let mut best_move: Move = moves[0];
     let mut best_score: i32 = -INFINITY;
 
-
     for (i, mv) in order_moves(moves, board, tables, ctrl, ply, hash_move).into_iter().enumerate() {
         let is_quiet: bool = !mv.flag().is_capture() && mv.flag().promotion_piece().is_none();
 
@@ -320,14 +339,21 @@ fn negamax(
         }
 
         let undo: UndoInfo = board.make_move(mv);
+        let gives_check: bool = is_in_check(board, tables);
         history.push(board.zobrist_key);
+
+        let mut extension: u32 = if gives_check { 1 } else { 0 };
+        if extension > 0 && extensions_used >= MAX_EXTENSIONS_PER_PATH {
+            extension = 0;
+        }
+        let child_depth: u32 = (depth - 1 + extension).min(depth);
+        let child_extensions: u32 = extensions_used + extension;
 
         // PVS with Null Window
         let score: i32 = if i == 0 {
-            -negamax(board, tables, tt, lmr_table, history, ctrl, depth - 1, ply + 1, -beta, -alpha)
+            -negamax(board, tables, tt, lmr_table, history, ctrl, child_depth, ply + 1, child_extensions, -beta, -alpha)
         } else {
             // Late Move Reduction
-            let gives_check: bool = is_in_check(board, tables);
             let reduction: u32 = if is_quiet
                 && !pv_node
                 && !in_check
@@ -342,14 +368,14 @@ fn negamax(
                 0
             };
             let reduced_depth: u32 = depth.saturating_sub(1 + reduction);
-            let mut probe: i32 = -negamax(board, tables, tt, lmr_table, history, ctrl, reduced_depth, ply + 1, -alpha - 1, -alpha);
+            let mut probe: i32 = -negamax(board, tables, tt, lmr_table, history, ctrl, reduced_depth, ply + 1, child_extensions, -alpha - 1, -alpha);
 
             if reduction > 0 && probe > alpha {
-                probe = -negamax(board, tables, tt, lmr_table, history, ctrl, depth - 1, ply + 1, -alpha - 1, -alpha);
+                probe = -negamax(board, tables, tt, lmr_table, history, ctrl, child_depth, ply + 1, child_extensions, -alpha - 1, -alpha);
             }
 
             if probe > alpha && probe < beta {
-                -negamax(board, tables, tt, lmr_table, history, ctrl, depth - 1, ply + 1, -beta, -alpha)
+                -negamax(board, tables, tt, lmr_table, history, ctrl, child_depth, ply + 1, child_extensions, -beta, -alpha)
             } else {
                 probe
             }
@@ -570,6 +596,7 @@ pub fn search_best_move(
             break;
         }
 
+        // Aspiration Windows
         let mut window: i32 = 50;
         let (mut alpha, mut beta) = if depth <= 2 {
             (-INFINITY, INFINITY)
@@ -578,7 +605,7 @@ pub fn search_best_move(
         };
 
         loop {
-            score = negamax(board, tables, tt, lmr_table, history, ctrl, depth, 0, alpha, beta);
+            score = negamax(board, tables, tt, lmr_table, history, ctrl, depth, 0, 0, alpha, beta);
             if ctrl.is_aborted() { break; }
 
             if score <= alpha {
