@@ -103,13 +103,8 @@ pub struct UndoInfo {
 }
 
 impl UndoInfo {
-    pub fn new(
-        piece: PieceType,
-        captured: Option<PieceType>,
-        castling_rights: u8,
-        en_passant: Option<u8>,
-        halfmove_clock: u16,
-        zobrist_key: u64,
+    pub fn new( piece: PieceType, captured: Option<PieceType>, castling_rights: u8,
+        en_passant: Option<u8>, halfmove_clock: u16, zobrist_key: u64,
     ) -> Self {
         Self {
             piece,

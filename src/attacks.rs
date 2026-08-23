@@ -236,7 +236,7 @@ fn mask_pawn_attacks(square: u8, color: Color) -> Bitboard {
 }
 
 /* Masks the attacks for a king at the given square */
-fn mask_king_attacks(square: u8) -> Bitboard {
+pub(crate) fn mask_king_attacks(square: u8) -> Bitboard {
     if square >= 64 {
         return Bitboard::EMPTY;
     }

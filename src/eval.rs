@@ -1,9 +1,126 @@
-use crate::{bitboard::{Bitboard, Color}, board::Board};
+use std::ops::{Add, AddAssign, Sub};
+
+use crate::{attacks::mask_king_attacks, bitboard::{Bitboard, Color, PieceType}, board::Board};
+
+#[derive(Clone, Copy, Default)]
+struct Score {
+    mg: i32,
+    eg: i32,
+}
+
+impl Add for Score {
+    type Output = Score;
+    fn add(self, rhs: Self) -> Self::Output {
+        Score {
+            mg: self.mg + rhs.mg,
+            eg: self.eg + rhs.eg
+        }
+    }
+}
+
+impl Sub for Score {
+    type Output = Score;
+    fn sub(self, rhs: Self) -> Self::Output {
+        Score {
+            mg: self.mg - rhs.mg,
+            eg: self.eg - rhs.eg
+        }
+    }
+}
+
+impl AddAssign for Score {
+    fn add_assign(&mut self, rhs: Self) {
+        self.mg += rhs.mg;
+        self.eg += rhs.eg;
+    }
+}
+
+pub struct EvalMask {
+    file: [Bitboard; 8],
+    adjacent_files: [Bitboard; 8],
+    passed_pawn: [[Bitboard; 64]; 2],
+    king_zone: [Bitboard; 64],
+}
+
+impl EvalMask {
+    pub fn new() -> Self {
+        let mut file: [Bitboard; 8] = [Bitboard::EMPTY; 8];
+        let mut adjacent_file: [Bitboard; 8] = [Bitboard::EMPTY; 8];
+        let mut passed_pawn: [[Bitboard; 64]; 2] = [[Bitboard::EMPTY; 64]; 2];
+        let mut king_zone: [Bitboard; 64] = [Bitboard::EMPTY; 64];
+
+        for f in 0u8..8 { file[f as usize] = mask_file_occ(f); }
+        for f in 0u8..8 {
+            adjacent_file[f as usize] = if f == 0 {
+                file[1]
+            } else if f == 7 {
+                file[6]
+            } else {
+                file[(f - 1) as usize] | file[(f + 1) as usize]
+            };
+        }
+
+        for square in 0u8..64 {
+            passed_pawn[Color::White as usize][square as usize] = mask_passed_pawn(square, Color::White);
+            passed_pawn[Color::Black as usize][square as usize] = mask_passed_pawn(square, Color::Black);
+            king_zone[square as usize] = mask_king_attacks(square);
+        }
+
+        EvalMask {
+            file,
+            adjacent_files: adjacent_file,
+            passed_pawn,
+            king_zone,
+        }
+    }
+
+    pub fn get_file_mask(&self, file: u8) -> Bitboard {
+        self.file[file as usize]
+    }
+    pub fn get_adjacent_file_mask(&self, file: u8) -> Bitboard {
+        self.adjacent_files[file as usize]
+    }
+    pub fn get_passed_pawn_mask(&self, square: u8, color: Color) -> Bitboard {
+        self.passed_pawn[color as usize][square as usize]
+    }
+    pub fn get_king_zone_mask(&self, square: u8) -> Bitboard {
+        self.king_zone[square as usize]
+    }
+}
+
+fn mask_file_occ(file: u8) -> Bitboard {
+    let mut mask: Bitboard = Bitboard::EMPTY;
+    for rank in 0u8..8 {
+        let square: u8 = rank * 8 + file;
+        mask.0 |= 1u64 << square;
+    }
+    mask
+}
+
+#[inline]
+fn mask_passed_pawn(square: u8, color: Color) -> Bitboard {
+    let mut mask: Bitboard = Bitboard::EMPTY;
+    let rank: u8 = square / 8;
+    let file: u8 = square % 8;
+
+    let ranks: Vec<u8> = if color == Color::White { ((rank + 1)..8).collect() } else { (0..rank).rev().collect() };
+    for r in ranks {
+        mask.0 |= 1u64 << (r * 8 + file);
+        if file > 0 {
+            mask.0 |= 1u64 << (r * 8 + (file - 1));
+        }
+        if file < 7 {
+            mask.0 |= 1u64 << (r * 8 + (file + 1));
+        }
+    }
+    mask
+}
 
 const PIECE_VALUES_MG: [i32; 6] = [82, 337, 365, 477, 1025, 0]; // Pawn, Knight, Bishop, Rook, Queen, King
 const PIECE_VALUES_EG: [i32; 6] = [94, 281, 297, 512, 936, 0];
 
 // PeSTO's Middlegame tables
+#[rustfmt::skip]
 const PESTO_MG: [[i32; 64]; 6] = [
     // Pawn
     [ 0,   0,   0,   0,   0,   0,  0,   0,
@@ -67,6 +184,7 @@ const PESTO_MG: [[i32; 64]; 6] = [
 ];
 
 // PeSTO's Endgame tables
+#[rustfmt::skip]
 const PESTO_EG: [[i32; 64]; 6] = [
     // Pawn
     [0,   0,   0,   0,   0,   0,   0,   0,
@@ -129,37 +247,89 @@ const PESTO_EG: [[i32; 64]; 6] = [
     -53, -34, -21, -11, -28, -14, -24, -43]
 ];
 
+const DOUBLED_PAWN_PENALTY_MG: i32 = -10;
+const DOUBLED_PAWN_PENALTY_EG: i32 = -20;
+
+const ISOLATED_PAWN_PENALTY_MG: i32 = -12;
+const ISOLATED_PAWN_PENALTY_EG: i32 = -8;
+
+const PASSED_PAWN_BONUS: [i32; 8] = [0, 5, 10, 20, 35, 50, 70, 0];
+
 const PHASE_WEIGHTS: [i32; 6] = [0, 1, 1, 2, 4, 0];
 const MAX_PHASE: i32 = 24;
 
+#[inline]
 fn mirror_square(square: u8) -> u8 { square ^ 56 }
 
-pub fn evaluate(board: &Board) -> i32 {
-    let (mut mg, mut eg, mut phase) = (0, 0, 0);
+fn evaluate_piece_position(board: &Board, phase: &mut i32, color: Color) -> Score {
+    let (mut mg, mut eg) = (0, 0);
 
     for piece in 0..6 {
-        let mut white: Bitboard  = board.pieces[Color::White as usize][piece];
-        while let Some(sq) = white.pop_lsb() {
-            let m: usize  = mirror_square(sq) as usize;
-            mg += PIECE_VALUES_MG[piece] + PESTO_MG[piece][m];
-            eg += PIECE_VALUES_EG[piece] + PESTO_EG[piece][m];
-            phase += PHASE_WEIGHTS[piece];
-        }
+        let mut p: Bitboard = board.pieces[color as usize][piece];
+        while let Some(square) = p.pop_lsb() {
+            let idx: usize = if color == Color::White { mirror_square(square) as usize } else { square as usize };
 
-        let mut black: Bitboard  = board.pieces[Color::Black as usize][piece];
-        while let Some(sq) = black.pop_lsb() {
-            mg -= PIECE_VALUES_MG[piece] + PESTO_MG[piece][sq as usize];
-            eg -= PIECE_VALUES_EG[piece] + PESTO_EG[piece][sq as usize];
-            phase += PHASE_WEIGHTS[piece];
+            mg += PIECE_VALUES_MG[piece] + PESTO_MG[piece][idx];
+            eg += PIECE_VALUES_EG[piece] + PESTO_EG[piece][idx];
+            *phase += PHASE_WEIGHTS[piece];
         }
     }
 
-    let phase: i32 = phase.min(MAX_PHASE);
-    let mut score: i32 = (mg * phase + eg * (MAX_PHASE - phase)) / MAX_PHASE;
+    Score { mg, eg }
+}
+
+fn evaluate_pawn_structure(board: &Board, color: Color, masks: &EvalMask) -> Score {
+    let (mut mg, mut eg) = (0, 0);
+    let stm_pawns: Bitboard = board.pieces[color as usize][PieceType::Pawn as usize];
+    let opp_pawns: Bitboard = board.pieces[color.opposite() as usize][PieceType::Pawn as usize];
+
+    // Doubled Pawns
+    for f in 0u8..8 {
+        let count = (stm_pawns & masks.get_file_mask(f)).pop_count();
+        if count > 1 {
+            let extra = (count - 1) as i32;
+            
+            mg += DOUBLED_PAWN_PENALTY_MG * extra;
+            eg += DOUBLED_PAWN_PENALTY_EG * extra;
+        }
+    }
+
+    let mut pawns: Bitboard = stm_pawns;
+    while let Some(square) = pawns.pop_lsb() {
+        let file: u8 = square % 8;
+
+        // Isolated Pawns
+        if stm_pawns & masks.get_adjacent_file_mask(file) == Bitboard::EMPTY {
+            mg += ISOLATED_PAWN_PENALTY_MG;
+            eg += ISOLATED_PAWN_PENALTY_EG;
+        }
+        
+        // Passed Pawns
+        if masks.get_passed_pawn_mask(square, color) & opp_pawns == Bitboard::EMPTY {
+            let rank: u8 = square / 8;
+            let relative_rank = if color == Color::White { rank } else { 7 - rank };
+
+            mg += PASSED_PAWN_BONUS[relative_rank as usize];
+            eg += PASSED_PAWN_BONUS[relative_rank as usize];
+        }
+    }    
+
+    Score { mg, eg }
+}
+
+pub fn evaluate(board: &Board, masks: &EvalMask) -> i32 {
+    let mut score: Score = Score { mg: 0, eg: 0 };
+    let mut phase: i32 = 0;
+
+    score += evaluate_piece_position(board, &mut phase, Color::White) - evaluate_piece_position(board, &mut phase, Color::Black);
+    score += evaluate_pawn_structure(board, Color::White, masks) - evaluate_pawn_structure(board, Color::Black, masks);
+
+    phase = phase.min(MAX_PHASE);
+    let mut final_score: i32 = (score.mg * phase + score.eg * (MAX_PHASE - phase)) / MAX_PHASE;
 
     if board.side_to_move == Color::Black {
-        score = -score;
+        final_score = -final_score;
     }
 
-    score
+    final_score
 }
