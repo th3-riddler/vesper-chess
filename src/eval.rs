@@ -1,6 +1,6 @@
-use std::ops::{Add, AddAssign, Sub};
+use std::{ops::{Add, AddAssign, Sub}};
 
-use crate::{attacks::mask_king_attacks, bitboard::{Bitboard, Color, PieceType}, board::Board};
+use crate::{attacks::{Tables, mask_king_attacks}, bitboard::{Bitboard, Color, PieceType}, board::Board};
 
 #[derive(Clone, Copy, Default)]
 struct Score {
@@ -255,6 +255,12 @@ const ISOLATED_PAWN_PENALTY_EG: i32 = -8;
 
 const PASSED_PAWN_BONUS: [i32; 8] = [0, 5, 10, 20, 35, 50, 70, 0];
 
+const BISHOP_PAIR_BONUS_MG: i32 = 30;
+const BISHOP_PAIR_BONUS_EG: i32 = 45;
+
+const MOBILITY_WEIGHT_MG: [i32; 6] = [0, 4, 5, 3, 2, 0]; // Pawn, Knight, Bishop, Rook, Queen, King
+const MOBILITY_WEIGHT_EG: [i32; 6] = [0, 3, 4, 4, 3, 0];
+
 const PHASE_WEIGHTS: [i32; 6] = [0, 1, 1, 2, 4, 0];
 const MAX_PHASE: i32 = 24;
 
@@ -285,9 +291,9 @@ fn evaluate_pawn_structure(board: &Board, color: Color, masks: &EvalMask) -> Sco
 
     // Doubled Pawns
     for f in 0u8..8 {
-        let count = (stm_pawns & masks.get_file_mask(f)).pop_count();
+        let count: u32 = (stm_pawns & masks.get_file_mask(f)).pop_count();
         if count > 1 {
-            let extra = (count - 1) as i32;
+            let extra: i32 = (count - 1) as i32;
             
             mg += DOUBLED_PAWN_PENALTY_MG * extra;
             eg += DOUBLED_PAWN_PENALTY_EG * extra;
@@ -317,12 +323,61 @@ fn evaluate_pawn_structure(board: &Board, color: Color, masks: &EvalMask) -> Sco
     Score { mg, eg }
 }
 
-pub fn evaluate(board: &Board, masks: &EvalMask) -> i32 {
+fn evaluate_bishop_pair(board: &Board, color: Color) -> Score {
+    let (mut mg, mut eg) = (0, 0);
+
+    let bishops: Bitboard = board.pieces[color as usize][PieceType::Bishop as usize];
+    let has_light: bool = (bishops & Bitboard::LIGHT_SQUARES) != Bitboard::EMPTY;
+    let has_dark: bool = (bishops & Bitboard::DARK_SQUARES) != Bitboard::EMPTY;
+
+    if has_light && has_dark {
+        mg += BISHOP_PAIR_BONUS_MG;
+        eg += BISHOP_PAIR_BONUS_EG;
+    }
+
+    Score { mg, eg }
+}
+
+fn evaluate_mobility(board: &Board, tables: &Tables, color: Color) -> Score {
+    let (mut mg, mut eg) = (0, 0);
+    let own: Bitboard = board.occupancy(color);
+    let occ: Bitboard = board.all_occupancy();
+
+    for (piece, weight_mg, weight_eg) in [
+        (PieceType::Knight, MOBILITY_WEIGHT_MG[1], MOBILITY_WEIGHT_EG[1]),
+        (PieceType::Bishop, MOBILITY_WEIGHT_MG[2], MOBILITY_WEIGHT_EG[2]),
+        (PieceType::Rook, MOBILITY_WEIGHT_MG[3], MOBILITY_WEIGHT_EG[3]),
+        (PieceType::Queen, MOBILITY_WEIGHT_MG[4], MOBILITY_WEIGHT_EG[4])
+    ] {
+        let mut pieces: Bitboard = board.pieces[color as usize][piece as usize];
+        while let Some(square) = pieces.pop_lsb() {
+            let attacks: Bitboard = match piece {
+                PieceType::Knight => tables.get_knight_attacks(square),
+                PieceType::Bishop => tables.get_bishop_attacks(square, occ),
+                PieceType::Rook => tables.get_rook_attacks(square, occ),
+                PieceType::Queen => tables.get_queen_attacks(square, occ),
+                _ => unreachable!()
+            };
+            let count: i32 = (attacks & !own).pop_count() as i32;
+            
+            mg += weight_mg * count;
+            eg += weight_eg * count;
+        }
+    }
+
+    Score { mg, eg }
+}
+
+pub fn evaluate(board: &Board, tables: &Tables, masks: &EvalMask) -> i32 {
     let mut score: Score = Score { mg: 0, eg: 0 };
     let mut phase: i32 = 0;
 
     score += evaluate_piece_position(board, &mut phase, Color::White) - evaluate_piece_position(board, &mut phase, Color::Black);
     score += evaluate_pawn_structure(board, Color::White, masks) - evaluate_pawn_structure(board, Color::Black, masks);
+
+    score += evaluate_bishop_pair(board, Color::White) - evaluate_bishop_pair(board, Color::Black);
+
+    score += evaluate_mobility(board, tables, Color::White) - evaluate_mobility(board, tables, Color::Black);
 
     phase = phase.min(MAX_PHASE);
     let mut final_score: i32 = (score.mg * phase + score.eg * (MAX_PHASE - phase)) / MAX_PHASE;

@@ -33,6 +33,8 @@ pub struct Bitboard(pub u64);
 impl Bitboard {
     pub const EMPTY: Bitboard = Bitboard(0);
     pub const ALL: Bitboard = Bitboard(u64::MAX);
+    pub const LIGHT_SQUARES: Bitboard = Bitboard(0x55AA55AA55AA55AA);
+    pub const DARK_SQUARES: Bitboard = Bitboard(0xAA55AA55AA55AA55);
 
     pub fn set(&mut self, square: u8) {
         self.0 |= 1 << square;

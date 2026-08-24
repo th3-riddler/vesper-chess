@@ -283,7 +283,7 @@ fn negamax(
         }
     }
 
-    let static_eval: i32 = evaluate(board, eval_mask);
+    let static_eval: i32 = evaluate(board, tables, eval_mask);
 
     // Razoring
     if !in_check && !pv_node && depth <= RAZOR_MAX_DEPTH && beta < MATE_THRESHOLD {
@@ -449,7 +449,7 @@ fn quiescence(
     let mut best_move: Move = Move::NULL;
 
     if !in_check {
-        best_score = evaluate(board, eval_mask);
+        best_score = evaluate(board, tables, eval_mask);
         if best_score >= beta {
             tt.store(
                 board.zobrist_key,
