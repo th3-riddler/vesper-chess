@@ -142,6 +142,8 @@ fn mask_passed_pawn(square: u8, color: Color) -> Bitboard {
 
 #[derive(Clone, Copy, Default)]
 struct KingEvalInfo {
+    // Stores the number of attack points for each color's king
+    // The attack points are calculated based on the number of squares of the king's inner and outer rings attacked by a piece, weighted by the piece type
     king_attack_points: [i32; 2],
 }
 
@@ -156,6 +158,70 @@ const fn build_king_danger_table() -> [i32; 64] {
     }
 
     table
+}
+
+#[derive(Clone, Debug)]
+pub struct Weights {
+    pub piece_values_mg: [i32; 6],
+    pub piece_values_eg: [i32; 6],
+    pub pst_mg: [[i32; 64]; 6],
+    pub pst_eg: [[i32; 64]; 6],
+    pub doubled_pawn_mg: i32,
+    pub doubled_pawn_eg: i32,
+    pub isolated_pawn_mg: i32,
+    pub isolated_pawn_eg: i32,
+    pub passed_pawn_bonus: [i32; 8],
+    pub bishop_pair_mg: i32,
+    pub bishop_pair_eg: i32,
+    pub mobility_mg: [i32; 6],
+    pub mobility_eg: [i32; 6],
+    pub inner_ring_weight: [i32; 6],
+    pub outer_ring_weight: [i32; 6],
+    pub king_danger_table: [i32; 64],
+}
+
+impl Default for Weights {
+    fn default() -> Self {
+        Weights {
+            piece_values_mg: PIECE_VALUES_MG,
+            piece_values_eg: PIECE_VALUES_EG,
+            pst_mg: PESTO_MG,
+            pst_eg: PESTO_EG,
+            doubled_pawn_mg: DOUBLED_PAWN_PENALTY_MG,
+            doubled_pawn_eg: DOUBLED_PAWN_PENALTY_EG,
+            isolated_pawn_mg: ISOLATED_PAWN_PENALTY_MG,
+            isolated_pawn_eg: ISOLATED_PAWN_PENALTY_EG,
+            passed_pawn_bonus: PASSED_PAWN_BONUS,
+            bishop_pair_mg: BISHOP_PAIR_BONUS_MG,
+            bishop_pair_eg: BISHOP_PAIR_BONUS_EG,
+            mobility_mg: MOBILITY_WEIGHT_MG,
+            mobility_eg: MOBILITY_WEIGHT_EG,
+            inner_ring_weight: INNER_RING_WEIGHT,
+            outer_ring_weight: OUTER_RING_WEIGHT,
+            king_danger_table: KING_DANGER_TABLE
+        }
+    }
+}
+
+impl Weights {
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut i32> {
+        self.piece_values_mg.iter_mut()
+            .chain(self.piece_values_eg.iter_mut())
+            .chain(self.pst_mg.iter_mut().flatten())
+            .chain(self.pst_eg.iter_mut().flatten())
+            .chain(std::iter::once(&mut self.doubled_pawn_mg))
+            .chain(std::iter::once(&mut self.doubled_pawn_eg))
+            .chain(std::iter::once(&mut self.isolated_pawn_mg))
+            .chain(std::iter::once(&mut self.isolated_pawn_eg))
+            .chain(self.passed_pawn_bonus.iter_mut())
+            .chain(std::iter::once(&mut self.bishop_pair_mg))
+            .chain(std::iter::once(&mut self.bishop_pair_eg))
+            .chain(self.mobility_mg.iter_mut())
+            .chain(self.mobility_eg.iter_mut())
+            .chain(self.inner_ring_weight.iter_mut())
+            .chain(self.outer_ring_weight.iter_mut())
+            .chain(self.king_danger_table.iter_mut())
+    }
 }
 
 // --------------------------------------------
@@ -331,7 +397,7 @@ const OUTER_RING_WEIGHT: [i32; 6] = [0, 1, 1, 2, 3, 0];
 const INNER_RING_WEIGHT: [i32; 6] = [0, 2, 2, 4, 5, 0];
 
 const KING_DANGER_SCALE_NUM: i32 = 1;
-const KING_DANGER_SCALE_DEN: i32 = 7;
+const KING_DANGER_SCALE_DEN: i32 = 8;
 const KING_DANGER_TABLE: [i32; 64] = build_king_danger_table();
 
 // --------------------------------------------
@@ -344,7 +410,7 @@ const MAX_PHASE: i32 = 24;
 #[inline]
 fn mirror_square(square: u8) -> u8 { square ^ 56 }
 
-fn evaluate_piece_position(board: &Board, phase: &mut i32, color: Color) -> Score {
+fn evaluate_piece_position(board: &Board, weights: &Weights, phase: &mut i32, color: Color) -> Score {
     let (mut mg, mut eg) = (0, 0);
 
     for piece in 0..6 {
@@ -352,8 +418,8 @@ fn evaluate_piece_position(board: &Board, phase: &mut i32, color: Color) -> Scor
         while let Some(square) = p.pop_lsb() {
             let idx: usize = if color == Color::White { mirror_square(square) as usize } else { square as usize };
 
-            mg += PIECE_VALUES_MG[piece] + PESTO_MG[piece][idx];
-            eg += PIECE_VALUES_EG[piece] + PESTO_EG[piece][idx];
+            mg += weights.piece_values_mg[piece] + weights.pst_mg[piece][idx];
+            eg += weights.piece_values_eg[piece] + weights.pst_eg[piece][idx];
             *phase += PHASE_WEIGHTS[piece];
         }
     }
@@ -361,7 +427,7 @@ fn evaluate_piece_position(board: &Board, phase: &mut i32, color: Color) -> Scor
     Score { mg, eg }
 }
 
-fn evaluate_pawn_structure(board: &Board, masks: &EvalMask, color: Color) -> Score {
+fn evaluate_pawn_structure(board: &Board, weights: &Weights, masks: &EvalMask, color: Color) -> Score {
     let (mut mg, mut eg) = (0, 0);
     let stm_pawns: Bitboard = board.pieces[color as usize][PieceType::Pawn as usize];
     let opp_pawns: Bitboard = board.pieces[color.opposite() as usize][PieceType::Pawn as usize];
@@ -372,8 +438,8 @@ fn evaluate_pawn_structure(board: &Board, masks: &EvalMask, color: Color) -> Sco
         if count > 1 {
             let extra: i32 = (count - 1) as i32;
             
-            mg += DOUBLED_PAWN_PENALTY_MG * extra;
-            eg += DOUBLED_PAWN_PENALTY_EG * extra;
+            mg += weights.doubled_pawn_mg * extra;
+            eg += weights.doubled_pawn_eg * extra;
         }
     }
 
@@ -383,8 +449,8 @@ fn evaluate_pawn_structure(board: &Board, masks: &EvalMask, color: Color) -> Sco
 
         // Isolated Pawns
         if stm_pawns & masks.get_adjacent_file_mask(file) == Bitboard::EMPTY {
-            mg += ISOLATED_PAWN_PENALTY_MG;
-            eg += ISOLATED_PAWN_PENALTY_EG;
+            mg += weights.isolated_pawn_mg;
+            eg += weights.isolated_pawn_eg;
         }
         
         // Passed Pawns
@@ -392,30 +458,33 @@ fn evaluate_pawn_structure(board: &Board, masks: &EvalMask, color: Color) -> Sco
             let rank: u8 = square / 8;
             let relative_rank = if color == Color::White { rank } else { 7 - rank };
 
-            mg += PASSED_PAWN_BONUS[relative_rank as usize];
-            eg += PASSED_PAWN_BONUS[relative_rank as usize];
+            mg += weights.passed_pawn_bonus[relative_rank as usize];
+            eg += weights.passed_pawn_bonus[relative_rank as usize];
         }
     }    
 
     Score { mg, eg }
 }
 
-fn evaluate_bishop_pair(board: &Board, color: Color) -> Score {
-    let (mut mg, mut eg) = (0, 0);
-
+fn evaluate_bishop_pair(board: &Board, weights: &Weights, color: Color) -> Score {
     let bishops: Bitboard = board.pieces[color as usize][PieceType::Bishop as usize];
     let has_light: bool = (bishops & Bitboard::LIGHT_SQUARES) != Bitboard::EMPTY;
     let has_dark: bool = (bishops & Bitboard::DARK_SQUARES) != Bitboard::EMPTY;
 
     if has_light && has_dark {
-        mg += BISHOP_PAIR_BONUS_MG;
-        eg += BISHOP_PAIR_BONUS_EG;
+        Score {
+            mg: weights.bishop_pair_mg,
+            eg: weights.bishop_pair_eg
+        }
+    } else {
+        Score::default()
     }
-
-    Score { mg, eg }
 }
 
-fn evaluate_mobility(board: &Board, tables: &Tables, masks: &EvalMask, king_info: &mut KingEvalInfo, color: Color) -> Score {
+fn evaluate_mobility(
+    board: &Board, tables: &Tables, masks: &EvalMask, weights: &Weights,
+    king_info: &mut KingEvalInfo, color: Color
+) -> Score {
     let (mut mg, mut eg) = (0, 0);
     let own: Bitboard = board.occupancy(color);
     let occ: Bitboard = board.all_occupancy();
@@ -423,11 +492,11 @@ fn evaluate_mobility(board: &Board, tables: &Tables, masks: &EvalMask, king_info
 
     let opp_king_sq: u8 = board.pieces[opp as usize][PieceType::King as usize].0.trailing_zeros() as u8;
 
-    for (piece, mobility_weight_mg, mobility_weight_eg, inner_ring_weight, outer_ring_weight) in [
-        (PieceType::Knight, MOBILITY_WEIGHT_MG[1], MOBILITY_WEIGHT_EG[1], INNER_RING_WEIGHT[1], OUTER_RING_WEIGHT[1]),
-        (PieceType::Bishop, MOBILITY_WEIGHT_MG[2], MOBILITY_WEIGHT_EG[2], INNER_RING_WEIGHT[2], OUTER_RING_WEIGHT[2]),
-        (PieceType::Rook, MOBILITY_WEIGHT_MG[3], MOBILITY_WEIGHT_EG[3], INNER_RING_WEIGHT[3], OUTER_RING_WEIGHT[3]),
-        (PieceType::Queen, MOBILITY_WEIGHT_MG[4], MOBILITY_WEIGHT_EG[4], INNER_RING_WEIGHT[4], OUTER_RING_WEIGHT[4])
+    for (piece, idx) in [
+        (PieceType::Knight, 1),
+        (PieceType::Bishop, 2),
+        (PieceType::Rook, 3),
+        (PieceType::Queen, 4)
     ] {
         let mut pieces: Bitboard = board.pieces[color as usize][piece as usize];
         while let Some(square) = pieces.pop_lsb() {
@@ -439,52 +508,50 @@ fn evaluate_mobility(board: &Board, tables: &Tables, masks: &EvalMask, king_info
                 _ => unreachable!()
             };
             let count: i32 = (attacks & !own).pop_count() as i32;
-            
-            mg += mobility_weight_mg * count;
-            eg += mobility_weight_eg * count;
+            mg += weights.mobility_mg[idx] * count;
+            eg += weights.mobility_eg[idx] * count;
 
-            let king_inner_ring_attack_count: i32 = (attacks & !own & masks.get_king_inner_ring_mask(opp_king_sq)).pop_count() as i32;
-            let king_outer_ring_attack_count: i32 = (attacks & !own & masks.get_king_outer_ring_mask(opp_king_sq)).pop_count() as i32;
+            let inner: i32 = (attacks & !own & masks.get_king_inner_ring_mask(opp_king_sq)).pop_count() as i32;
+            let outer: i32 = (attacks & !own & masks.get_king_outer_ring_mask(opp_king_sq)).pop_count() as i32;
 
-            king_info.king_attack_points[opp as usize] += 
-                king_inner_ring_attack_count * inner_ring_weight +
-                king_outer_ring_attack_count * outer_ring_weight;
+            king_info.king_attack_points[opp as usize] += inner * weights.inner_ring_weight[idx] + outer * weights.outer_ring_weight[idx];
         }
     }
 
     Score { mg, eg }
 }
 
-fn evaluate_king_attacks(points: i32) -> Score {
-    let index: usize = points.min((KING_DANGER_TABLE.len() - 1) as i32) as usize;
+fn evaluate_king_attacks(points: i32, weights: &Weights) -> Score {
+    let max_index: i32 = (weights.king_danger_table.len() - 1) as i32;
+    let index: usize = points.clamp(0, max_index) as usize;
 
     Score {
-        mg: -KING_DANGER_TABLE[index],
+        mg: -weights.king_danger_table[index],
         eg: 0,
     }
 }
 
-fn evaluate_king_safety(board: &Board, tables: &Tables, king_info: &KingEvalInfo, masks: &EvalMask, color: Color) -> Score {
+fn evaluate_king_safety(king_info: &KingEvalInfo, weights: &Weights, color: Color) -> Score {
     let mut score: Score = Score::default();
     
-    score += evaluate_king_attacks(king_info.king_attack_points[color as usize]);
+    score += evaluate_king_attacks(king_info.king_attack_points[color as usize], weights);
 
     score
 }
 
-pub fn evaluate(board: &Board, tables: &Tables, masks: &EvalMask) -> i32 {
+pub fn evaluate(board: &Board, tables: &Tables, masks: &EvalMask, weights: &Weights) -> i32 {
     let mut score: Score = Score::default();
     let mut phase: i32 = 0;
     let mut king_info: KingEvalInfo = KingEvalInfo::default();
 
-    score += evaluate_piece_position(board, &mut phase, Color::White) - evaluate_piece_position(board, &mut phase, Color::Black);
-    score += evaluate_pawn_structure(board, masks, Color::White) - evaluate_pawn_structure(board, masks, Color::Black);
+    score += evaluate_piece_position(board, weights, &mut phase, Color::White) - evaluate_piece_position(board, weights, &mut phase, Color::Black);
+    score += evaluate_pawn_structure(board, weights, masks, Color::White) - evaluate_pawn_structure(board, weights, masks, Color::Black);
 
-    score += evaluate_bishop_pair(board, Color::White) - evaluate_bishop_pair(board, Color::Black);
+    score += evaluate_bishop_pair(board, weights, Color::White) - evaluate_bishop_pair(board, weights, Color::Black);
 
-    score += evaluate_mobility(board, tables, masks, &mut king_info, Color::White) - evaluate_mobility(board, tables, masks, &mut king_info, Color::Black);
+    score += evaluate_mobility(board, tables, masks, weights, &mut king_info, Color::White) - evaluate_mobility(board, tables, masks, weights, &mut king_info, Color::Black);
 
-    score += evaluate_king_safety(board, tables, &king_info, masks, Color::White) - evaluate_king_safety(board, tables, &king_info, masks, Color::Black);
+    score += evaluate_king_safety(&king_info, weights, Color::White) - evaluate_king_safety(&king_info, weights, Color::Black);
 
     phase = phase.min(MAX_PHASE);
     let mut final_score: i32 = (score.mg * phase + score.eg * (MAX_PHASE - phase)) / MAX_PHASE;

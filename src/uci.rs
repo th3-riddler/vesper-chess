@@ -10,7 +10,7 @@ use std::{
 };
 
 use crate::{
-    attacks::Tables, bitboard::{Bitboard, Color, PieceType}, board::Board, eval::EvalMask, moves::{Move, MoveFlag, generate_legal_moves}, search::{LMRTable, MATE_THRESHOLD, MATE_VALUE, SearcInfo, SearchControl, search_best_move}, tt::TranspositionTable,
+    attacks::Tables, bitboard::{Bitboard, Color, PieceType}, board::Board, eval::{EvalMask, Weights}, moves::{Move, MoveFlag, generate_legal_moves}, search::{LMRTable, MATE_THRESHOLD, MATE_VALUE, SearcInfo, SearchControl, search_best_move}, tt::TranspositionTable,
 };
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -218,6 +218,7 @@ pub fn uci_loop() {
     let tables: Arc<Tables> = Arc::new(Tables::new());
     let tt: Arc<Mutex<TranspositionTable>> = Arc::new(Mutex::new(TranspositionTable::new(64))); // 64 MB default
     let board: Arc<Mutex<Board>> = Arc::new(Mutex::new(Board::start_position().unwrap()));
+    let weights: Arc<Mutex<Weights>> = Arc::new(Mutex::new(Weights::default()));
     let history: Arc<Mutex<Vec<u64>>> = Arc::new(Mutex::new(vec![board.lock().unwrap().zobrist_key]));
     let lmr_table: Arc<Mutex<LMRTable>> = Arc::new(Mutex::new(LMRTable::new()));
     let eval_mask: Arc<Mutex<EvalMask>> = Arc::new(Mutex::new(EvalMask::new()));
@@ -250,10 +251,11 @@ pub fn uci_loop() {
             Some("go") => {
                 stop_flag.store(false, Ordering::Relaxed);
                 let params: GoParams = parse_go_command(tokens);
-                let (board, tables, tt, lmr_table, eval_mask, history, stop_flag) = (
+                let (board, tables, tt, weights, lmr_table, eval_mask, history, stop_flag) = (
                     Arc::clone(&board),
                     Arc::clone(&tables),
                     Arc::clone(&tt),
+                    Arc::clone(&weights),
                     Arc::clone(&lmr_table),
                     Arc::clone(&eval_mask),
                     Arc::clone(&history),
@@ -265,6 +267,7 @@ pub fn uci_loop() {
                     let (deadline, max_depth) = compute_deadline(&params, board.side_to_move);
                     let mut ctrl: SearchControl = SearchControl::new(deadline, stop_flag);
                     let mut tt: MutexGuard<'_, TranspositionTable> = tt.lock().unwrap();
+                    let mut weights: MutexGuard<'_, Weights> = weights.lock().unwrap();
                     let mut history: MutexGuard<'_, Vec<u64>> = history.lock().unwrap();
                     let lmr_table: MutexGuard<'_, LMRTable> = lmr_table.lock().unwrap();
                     let eval_mask: MutexGuard<'_, EvalMask> = eval_mask.lock().unwrap();
@@ -273,6 +276,7 @@ pub fn uci_loop() {
                         &mut board,
                         &tables,
                         &mut tt,
+                        &mut weights,
                         &lmr_table,
                         &eval_mask,
                         &mut history,

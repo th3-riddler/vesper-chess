@@ -19,7 +19,7 @@ use std::{
 };
 
 use crate::{
-    attacks::Tables, bitboard::{Bitboard, Color, PieceType}, board::{Board, NullMoveUndo}, eval::{EvalMask, evaluate}, moves::{Move, UndoInfo, generate_legal_moves, is_in_check}, see::see, tt::{Bound, TTEntry, TranspositionTable},
+    attacks::Tables, bitboard::{Bitboard, Color, PieceType}, board::{Board, NullMoveUndo}, eval::{EvalMask, Weights, evaluate}, moves::{Move, UndoInfo, generate_legal_moves, is_in_check}, see::see, tt::{Bound, TTEntry, TranspositionTable},
 };
 
 pub(crate) const MATE_VALUE: i32 = 30_000;
@@ -213,6 +213,7 @@ fn negamax(
     board: &mut Board,
     tables: &Tables,
     tt: &mut TranspositionTable,
+    weights: &mut Weights,
     lmr_table: &LMRTable,
     eval_mask: &EvalMask,
     history: &mut Vec<u64>,
@@ -253,7 +254,7 @@ fn negamax(
     }
 
     if depth == 0 {
-        return quiescence(board, tables, tt, ctrl, ply, eval_mask, alpha, beta);
+        return quiescence(board, tables, tt, weights, ctrl, ply, eval_mask, alpha, beta);
     }
 
     let in_check: bool = is_in_check(board, tables);
@@ -272,7 +273,7 @@ fn negamax(
         // Dynamic Null Move Pruning
         let reduction: u32 = null_move_reduction(depth);
         let reduced_depth: u32 = depth.saturating_sub(1 + reduction);
-        let score: i32 = -negamax(board, tables, tt, lmr_table, eval_mask, history, ctrl, reduced_depth, ply + 1, extensions_used, -beta, -beta + 1);
+        let score: i32 = -negamax(board, tables, tt, weights, lmr_table, eval_mask, history, ctrl, reduced_depth, ply + 1, extensions_used, -beta, -beta + 1);
         
         history.pop();
         board.unmake_null_move(undo);
@@ -283,13 +284,13 @@ fn negamax(
         }
     }
 
-    let static_eval: i32 = evaluate(board, tables, eval_mask);
+    let static_eval: i32 = evaluate(board, tables, eval_mask, weights);
 
     // Razoring
     if !in_check && !pv_node && depth <= RAZOR_MAX_DEPTH && beta < MATE_THRESHOLD {
         let margin: i32 = razor_margin(depth);
         if static_eval + margin <= alpha {
-            let razor_score: i32 = quiescence(board, tables, tt, ctrl, ply, eval_mask, alpha, beta);
+            let razor_score: i32 = quiescence(board, tables, tt, weights, ctrl, ply, eval_mask, alpha, beta);
             if razor_score <= alpha {
                 return razor_score;
             }
@@ -346,7 +347,7 @@ fn negamax(
 
         // PVS with Null Window
         let score: i32 = if i == 0 {
-            -negamax(board, tables, tt, lmr_table, eval_mask, history, ctrl, child_depth, ply + 1, child_extensions, -beta, -alpha)
+            -negamax(board, tables, tt, weights, lmr_table, eval_mask, history, ctrl, child_depth, ply + 1, child_extensions, -beta, -alpha)
         } else {
             // Late Move Reduction
             let reduction: u32 = if is_quiet
@@ -363,14 +364,14 @@ fn negamax(
                 0
             };
             let reduced_depth: u32 = depth.saturating_sub(1 + reduction);
-            let mut probe: i32 = -negamax(board, tables, tt, lmr_table, eval_mask, history, ctrl, reduced_depth, ply + 1, child_extensions, -alpha - 1, -alpha);
+            let mut probe: i32 = -negamax(board, tables, tt, weights, lmr_table, eval_mask, history, ctrl, reduced_depth, ply + 1, child_extensions, -alpha - 1, -alpha);
 
             if reduction > 0 && probe > alpha {
-                probe = -negamax(board, tables, tt, lmr_table, eval_mask, history, ctrl, child_depth, ply + 1, child_extensions, -alpha - 1, -alpha);
+                probe = -negamax(board, tables, tt, weights, lmr_table, eval_mask, history, ctrl, child_depth, ply + 1, child_extensions, -alpha - 1, -alpha);
             }
 
             if probe > alpha && probe < beta {
-                -negamax(board, tables, tt, lmr_table, eval_mask, history, ctrl, child_depth, ply + 1, child_extensions, -beta, -alpha)
+                -negamax(board, tables, tt, weights, lmr_table, eval_mask, history, ctrl, child_depth, ply + 1, child_extensions, -beta, -alpha)
             } else {
                 probe
             }
@@ -419,6 +420,7 @@ fn quiescence(
     board: &mut Board,
     tables: &Tables,
     tt: &mut TranspositionTable,
+    weights: &mut Weights,
     ctrl: &mut SearchControl,
     ply: u32,
     eval_mask: &EvalMask,
@@ -449,7 +451,7 @@ fn quiescence(
     let mut best_move: Move = Move::NULL;
 
     if !in_check {
-        best_score = evaluate(board, tables, eval_mask);
+        best_score = evaluate(board, tables, eval_mask, weights);
         if best_score >= beta {
             tt.store(
                 board.zobrist_key,
@@ -497,7 +499,7 @@ fn quiescence(
 
     for mv in candidates {
         let undo: UndoInfo = board.make_move(mv);
-        let score: i32 = -quiescence(board, tables, tt, ctrl, ply + 1, eval_mask, -beta, -alpha);
+        let score: i32 = -quiescence(board, tables, tt, weights, ctrl, ply + 1, eval_mask, -beta, -alpha);
         board.unmake_move(mv, undo);
 
         if score > best_score {
@@ -571,6 +573,7 @@ pub fn search_best_move(
     board: &mut Board,
     tables: &Tables,
     tt: &mut TranspositionTable,
+    weights: &mut Weights,
     lmr_table: &LMRTable,
     eval_mask: &EvalMask,
     history: &mut Vec<u64>,
@@ -602,7 +605,7 @@ pub fn search_best_move(
         };
 
         loop {
-            score = negamax(board, tables, tt, lmr_table, eval_mask, history, ctrl, depth, 0, 0, alpha, beta);
+            score = negamax(board, tables, tt, weights, lmr_table, eval_mask, history, ctrl, depth, 0, 0, alpha, beta);
             if ctrl.is_aborted() { break; }
 
             if score <= alpha {
