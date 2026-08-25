@@ -1,7 +1,7 @@
 /**
  * Texel Automated Tuning
  * This file is used to tune the evaluation weights of Vesper using a dataset of positions and their results.
- * The database is the 'lichess-big3-resolved
+ * The database is the 'lichess-big3-resolved'
 */
 use std::{
     fs::File,
