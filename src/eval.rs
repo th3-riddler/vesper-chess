@@ -205,8 +205,8 @@ impl Default for Weights {
 
 impl Weights {
     pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut i32> {
-        self.piece_values_mg.iter_mut()
-            .chain(self.piece_values_eg.iter_mut())
+        self.piece_values_mg[..5].iter_mut()
+            .chain(self.piece_values_eg[..5].iter_mut())
             .chain(self.pst_mg.iter_mut().flatten())
             .chain(self.pst_eg.iter_mut().flatten())
             .chain(std::iter::once(&mut self.doubled_pawn_mg))
@@ -397,7 +397,7 @@ const OUTER_RING_WEIGHT: [i32; 6] = [0, 1, 1, 2, 3, 0];
 const INNER_RING_WEIGHT: [i32; 6] = [0, 2, 2, 4, 5, 0];
 
 const KING_DANGER_SCALE_NUM: i32 = 1;
-const KING_DANGER_SCALE_DEN: i32 = 8;
+const KING_DANGER_SCALE_DEN: i32 = 7;
 const KING_DANGER_TABLE: [i32; 64] = build_king_danger_table();
 
 // --------------------------------------------
