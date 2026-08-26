@@ -171,13 +171,15 @@ fn parse_go_command(mut tokens: SplitWhitespace) -> GoParams {
     p
 }
 
-fn compute_deadline(p: &GoParams, stm: Color) -> (Instant, Option<u32>) {
+fn compute_deadline(p: &GoParams, stm: Color) -> (Instant, Instant, Option<u32>) {
     let now: Instant = Instant::now();
     if let Some(d) = p.depth {
-        return (now + Duration::from_secs(3600), Some(d));
+        let far_future: Instant = now + Duration::from_secs(3600);
+        return (far_future, far_future, Some(d));
     }
     if let Some(mt) = p.movetime {
-        return (now + Duration::from_millis(mt), None);
+        let deadline: Instant = now + Duration::from_millis(mt);
+        return (deadline, deadline, None);
     }
 
     let (time, inc) = match stm {
@@ -185,9 +187,10 @@ fn compute_deadline(p: &GoParams, stm: Color) -> (Instant, Option<u32>) {
         Color::Black => (p.btime.unwrap_or(10_000), p.binc.unwrap_or(0)),
     };
 
-    let budget_ms: u64 = (time / 30 + inc / 2).max(50);
+    let soft_ms: u64 = (time / 30 + inc / 2).max(50);
+    let hard_ms: u64 = (soft_ms * 3).min(time / 2).max(soft_ms + 50);
 
-    (now + Duration::from_millis(budget_ms), None)
+    (now + Duration::from_millis(soft_ms), now + Duration::from_millis(hard_ms), None)
 }
 
 fn format_score(score: i32) -> String {
@@ -264,8 +267,8 @@ pub fn uci_loop() {
 
                 search_handle = Some(thread::spawn(move || {
                     let mut board: MutexGuard<'_, Board> = board.lock().unwrap();
-                    let (deadline, max_depth) = compute_deadline(&params, board.side_to_move);
-                    let mut ctrl: SearchControl = SearchControl::new(deadline, stop_flag);
+                    let (soft_deadline, hard_deadline, max_depth) = compute_deadline(&params, board.side_to_move);
+                    let mut ctrl: SearchControl = SearchControl::new(soft_deadline, hard_deadline, stop_flag);
                     let mut tt: MutexGuard<'_, TranspositionTable> = tt.lock().unwrap();
                     let mut weights: MutexGuard<'_, Weights> = weights.lock().unwrap();
                     let mut history: MutexGuard<'_, Vec<u64>> = history.lock().unwrap();

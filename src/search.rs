@@ -15,7 +15,7 @@ use std::{
     cmp::{Reverse, min}, sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
-    }, time::Instant,
+    }, time::{Duration, Instant},
 };
 
 use crate::{
@@ -31,7 +31,8 @@ const MAX_PLY: usize = 128;
 const NULL_MOVE_MIN_DEPTH: u32 = 3;
 
 pub struct SearchControl {
-    deadline: Instant,
+    soft_deadline: Instant,
+    hard_deadline: Instant,
     stop: Arc<AtomicBool>,
     nodes: u64,
     aborted: bool,
@@ -40,9 +41,10 @@ pub struct SearchControl {
 }
 
 impl SearchControl {
-    pub fn new(deadline: Instant, stop: Arc<AtomicBool>) -> Self {
+    pub fn new(soft_deadline: Instant, hard_deadline: Instant, stop: Arc<AtomicBool>) -> Self {
         SearchControl {
-            deadline,
+            soft_deadline,
+            hard_deadline,
             stop,
             nodes: 0,
             aborted: false,
@@ -79,7 +81,7 @@ impl SearchControl {
         self.nodes += 1;
         if !self.aborted
             && self.nodes % 2048 == 0
-            && (self.stop.load(Ordering::Relaxed) || Instant::now() >= self.deadline)
+            && (self.stop.load(Ordering::Relaxed) || Instant::now() >= self.hard_deadline)
         {
             self.aborted = true;
         }
@@ -588,11 +590,26 @@ pub fn search_best_move(
     );
 
     let mut best_move: Move = root_moves[0];
+    let mut previous_best: Option<Move> = None;
+    let mut stable_count: u32 = 0u32;
     let start: Instant = Instant::now();
 
     let mut score: i32 = 0;
     for depth in 1..=max_depth.unwrap_or(u32::MAX) {
-        if ctrl.stop.load(Ordering::Relaxed) || Instant::now() >= ctrl.deadline {
+        let soft_duration: Duration = ctrl.soft_deadline.saturating_duration_since(start);
+        let shrink: Duration = soft_duration / 3;
+        let extend: Duration = soft_duration / 2;
+        let min_soft: Instant = start + soft_duration / 2;
+
+        let effective_soft: Instant = if previous_best.is_some() && Some(best_move) != previous_best {
+            (ctrl.soft_deadline + extend).min(ctrl.hard_deadline)
+        } else if stable_count >= 3 {
+            ctrl.soft_deadline.checked_sub(shrink).unwrap_or(start).max(min_soft)
+        } else {
+            ctrl.soft_deadline
+        };
+
+        if ctrl.stop.load(Ordering::Relaxed) || Instant::now() >= effective_soft {
             break;
         }
 
@@ -622,6 +639,8 @@ pub fn search_best_move(
         if ctrl.is_aborted() { break; }
 
         if let Some(entry) = tt.probe(board.zobrist_key) {
+            if Some(entry.best_move()) == previous_best { stable_count += 1; } else { stable_count = 0; }
+            previous_best = Some(entry.best_move());
             best_move = entry.best_move();
         }
 
