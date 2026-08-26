@@ -456,12 +456,12 @@ fn evaluate_pawn_structure(board: &Board, weights: &Weights, masks: &EvalMask, c
         // Passed Pawns
         if masks.get_passed_pawn_mask(square, color) & opp_pawns == Bitboard::EMPTY {
             let rank: u8 = square / 8;
-            let relative_rank = if color == Color::White { rank } else { 7 - rank };
+            let relative_rank: u8 = if color == Color::White { rank } else { 7 - rank };
 
             mg += weights.passed_pawn_bonus[relative_rank as usize];
             eg += weights.passed_pawn_bonus[relative_rank as usize];
         }
-    }    
+    }
 
     Score { mg, eg }
 }

@@ -171,6 +171,14 @@ fn parse_go_command(mut tokens: SplitWhitespace) -> GoParams {
     p
 }
 
+fn compute_soft_hard_ms(time: u64, inc: u64) -> (u64, u64) {
+    let time_safety_cap: u64 = time.saturating_sub(20).max(10);
+    let soft_ms: u64 = (time / 30 + inc / 2).max(20).min(time_safety_cap);
+    let hard_ms: u64 = (soft_ms * 3).max(soft_ms + 20).min(time_safety_cap);
+    
+    (soft_ms, hard_ms)
+}
+
 fn compute_deadline(p: &GoParams, stm: Color) -> (Instant, Instant, Option<u32>) {
     let now: Instant = Instant::now();
     if let Some(d) = p.depth {
@@ -187,8 +195,8 @@ fn compute_deadline(p: &GoParams, stm: Color) -> (Instant, Instant, Option<u32>)
         Color::Black => (p.btime.unwrap_or(10_000), p.binc.unwrap_or(0)),
     };
 
-    let soft_ms: u64 = (time / 30 + inc / 2).max(50);
-    let hard_ms: u64 = (soft_ms * 3).min(time / 2).max(soft_ms + 50);
+    let (soft_ms, hard_ms) = compute_soft_hard_ms(time, inc);
+    let now: Instant = Instant::now();
 
     (now + Duration::from_millis(soft_ms), now + Duration::from_millis(hard_ms), None)
 }
