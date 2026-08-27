@@ -1,16 +1,27 @@
 use std::{
-    io::{self, BufRead},
-    str::SplitWhitespace,
-    sync::{
-        Arc, Mutex, MutexGuard,
-        atomic::{AtomicBool, Ordering},
-    },
-    thread,
-    time::{Duration, Instant},
+    io::{self, BufRead}, str::SplitWhitespace, sync::{
+        Arc, Mutex, MutexGuard, atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
+    }, thread, time::{Duration, Instant},
 };
 
 use crate::{
-    attacks::Tables, bitboard::{Bitboard, Color, PieceType}, board::Board, eval::{EvalMask, Weights}, moves::{Move, MoveFlag, generate_legal_moves}, search::{LMRTable, MATE_THRESHOLD, MATE_VALUE, SearcInfo, SearchControl, search_best_move}, tt::TranspositionTable,
+    attacks::Tables,
+    bitboard::{
+        Bitboard, Color, PieceType
+    }, board::Board,
+    moves::{
+        Move,
+        MoveFlag,
+        generate_legal_moves
+    }, eval::{EvalMask, Weights},
+    search::{
+        LMRTable,
+        MATE_THRESHOLD,
+        MATE_VALUE,
+        SearchControl,
+        SearchInfo,
+        search_best_move
+    }, tt::TranspositionTable,
 };
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -227,14 +238,15 @@ pub fn print_bitboard(bb: Bitboard) {
 
 pub fn uci_loop() {
     let tables: Arc<Tables> = Arc::new(Tables::new());
-    let tt: Arc<Mutex<TranspositionTable>> = Arc::new(Mutex::new(TranspositionTable::new(64))); // 64 MB default
+    let mut tt: Arc<TranspositionTable> = Arc::new(TranspositionTable::new(64)); // 64 MB default
     let board: Arc<Mutex<Board>> = Arc::new(Mutex::new(Board::start_position().unwrap()));
-    let weights: Arc<Mutex<Weights>> = Arc::new(Mutex::new(Weights::default()));
+    let weights: Arc<Weights> = Arc::new(Weights::default());
     let history: Arc<Mutex<Vec<u64>>> = Arc::new(Mutex::new(vec![board.lock().unwrap().zobrist_key]));
-    let lmr_table: Arc<Mutex<LMRTable>> = Arc::new(Mutex::new(LMRTable::new()));
-    let eval_mask: Arc<Mutex<EvalMask>> = Arc::new(Mutex::new(EvalMask::new()));
+    let lmr_table: Arc<LMRTable> = Arc::new(LMRTable::new());
+    let eval_mask: Arc<EvalMask> = Arc::new(EvalMask::new());
     let stop_flag: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
-    let mut search_handle: Option<thread::JoinHandle<()>> = None;
+    let mut search_handles: Vec<thread::JoinHandle<()>> = Vec::new();
+    let num_threads: AtomicUsize = AtomicUsize::new(1);
 
     for line in io::stdin().lock().lines() {
         let line: String = line.unwrap();
@@ -244,14 +256,38 @@ pub fn uci_loop() {
             Some("uci") => {
                 println!("id name Vesper {}", VERSION);
                 println!("id author Redux");
+                println!("option name Threads type spin default 1 min 1 max 16");
+                println!("option name Hash type spin default 64 min 1 max 1024");
                 println!("uciok");
+            }
+            Some("setoption") => {
+                let rest: Vec<&str> = tokens.collect();
+                if let (Some(ni), Some(vi)) = (rest.iter().position(|&t| t == "name"), rest.iter().position(|&t| t == "value")) {
+                    let name: String = rest[ni + 1..vi].join(" ");
+                    if name.eq_ignore_ascii_case("Threads") {
+                        if let Ok(n) = rest[vi + 1..].join(" ").parse::<usize>() {
+                            num_threads.store(n.max(1).min(16), Ordering::Relaxed);
+                        }
+                    }
+                    if name.eq_ignore_ascii_case("Hash") {
+                        stop_flag.store(true, Ordering::Relaxed);
+                        for h in search_handles.drain(..) {
+                            let _ = h.join();
+                        }
+                        stop_flag.store(false, Ordering::Relaxed);
+
+                        if let Ok(n) = rest[vi + 1..].join(" ").parse::<usize>() {
+                            tt = Arc::new(TranspositionTable::new(n.max(1).min(1024)));
+                        }
+                    }
+                }
             }
             Some("isready") => {
                 println!("readyok");
             }
             Some("ucinewgame") => {
                 *board.lock().unwrap() = Board::start_position().unwrap();
-                tt.lock().unwrap().clear();
+                tt.clear();
                 *history.lock().unwrap() = vec![board.lock().unwrap().zobrist_key];
             }
             Some("position") => {
@@ -260,59 +296,66 @@ pub fn uci_loop() {
                 *board.lock().unwrap() = new_board;
             }
             Some("go") => {
+                stop_flag.store(true, Ordering::Relaxed);
+                for h in search_handles.drain(..) {
+                    let _ = h.join();
+                }
                 stop_flag.store(false, Ordering::Relaxed);
+
                 let params: GoParams = parse_go_command(tokens);
-                let (board, tables, tt, weights, lmr_table, eval_mask, history, stop_flag) = (
-                    Arc::clone(&board),
-                    Arc::clone(&tables),
-                    Arc::clone(&tt),
-                    Arc::clone(&weights),
-                    Arc::clone(&lmr_table),
-                    Arc::clone(&eval_mask),
-                    Arc::clone(&history),
-                    Arc::clone(&stop_flag),
-                );
+                let n: usize = num_threads.load(Ordering::Relaxed).max(1);
 
-                search_handle = Some(thread::spawn(move || {
-                    let mut board: MutexGuard<'_, Board> = board.lock().unwrap();
-                    let (soft_deadline, hard_deadline, max_depth) = compute_deadline(&params, board.side_to_move);
-                    let mut ctrl: SearchControl = SearchControl::new(soft_deadline, hard_deadline, stop_flag);
-                    let mut tt: MutexGuard<'_, TranspositionTable> = tt.lock().unwrap();
-                    let mut weights: MutexGuard<'_, Weights> = weights.lock().unwrap();
-                    let mut history: MutexGuard<'_, Vec<u64>> = history.lock().unwrap();
-                    let lmr_table: MutexGuard<'_, LMRTable> = lmr_table.lock().unwrap();
-                    let eval_mask: MutexGuard<'_, EvalMask> = eval_mask.lock().unwrap();
+                let root_board: Board = board.lock().unwrap().clone();
+                let root_history: Vec<u64> = history.lock().unwrap().clone();
+                let (soft_deadline, hard_deadline, max_depth) = compute_deadline(&params, root_board.side_to_move);
+                let global_nodes: Arc<AtomicU64> = Arc::new(AtomicU64::new(0));
 
-                    let best: Move = search_best_move(
-                        &mut board,
-                        &tables,
-                        &mut tt,
-                        &mut weights,
-                        &lmr_table,
-                        &eval_mask,
-                        &mut history,
-                        &mut ctrl,
-                        max_depth,
-                        |info: &SearcInfo| {
-                            let pv: Vec<String> =
-                                info.pv.iter().map(|&mv| move_to_uci_string(mv)).collect();
-                            println!(
-                                "info depth {} score {} nodes {} time {} pv {}",
-                                info.depth,
-                                format_score(info.score),
-                                info.nodes,
-                                info.time_ms,
-                                pv.join(" ")
-                            );
-                        },
+                for thread_id in 0..n {
+                    let mut thread_board: Board = root_board.clone();
+                    let mut thread_history: Vec<u64> = root_history.clone();
+                    let (tables, masks, weights, tt, lmr_table) = (
+                        Arc::clone(&tables),
+                        Arc::clone(&eval_mask),
+                        Arc::clone(&weights),
+                        Arc::clone(&tt),
+                        Arc::clone(&lmr_table)
                     );
-                    println!("bestmove {}", move_to_uci_string(best));
-                }));
+                    let stop_flag: Arc<AtomicBool> = Arc::clone(&stop_flag);
+                    let global_nodes: Arc<AtomicU64> = Arc::clone(&global_nodes);
+                    let is_main: bool = thread_id == 0;
+                    let depth_offset: u32 = if is_main { 0 } else { (thread_id as u32) % 4 };
+
+                    search_handles.push(thread::spawn(move || {
+                        let mut ctrl: SearchControl = SearchControl::new(soft_deadline, hard_deadline, stop_flag, global_nodes);
+
+                        let on_info = move |info: &SearchInfo| {
+                            if is_main {
+                                println!(
+                                    "info depth {} score {} nodes {} time {} pv {}",
+                                    info.depth,
+                                    format_score(info.score),
+                                    info.nodes,
+                                    info.time_ms,
+                                    info.pv.iter().map(|&m| move_to_uci_string(m)).collect::<Vec<String>>().join(" ")
+                                );
+                            }
+                        };
+
+                        let best_move: Move = search_best_move(
+                            &mut thread_board, &tables, &tt, &weights, &lmr_table, &masks,
+                            &mut thread_history, &mut ctrl, max_depth, depth_offset, on_info
+                        );
+
+                        if is_main {
+                            println!("bestmove {}", move_to_uci_string(best_move));
+                        }
+                    }));
+                }
             }
             Some("stop") => stop_flag.store(true, Ordering::Relaxed),
             Some("quit") => {
                 stop_flag.store(false, Ordering::Relaxed);
-                if let Some(h) = search_handle.take() {
+                for h in search_handles.drain(..) {
                     let _ = h.join();
                 }
                 break;

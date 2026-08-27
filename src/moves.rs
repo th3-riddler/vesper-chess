@@ -5,7 +5,7 @@ use crate::{
 };
 
 #[derive(Copy, Clone, Eq, Hash, PartialEq, Debug)]
-pub struct Move(u16);
+pub struct Move(pub u16);
 
 impl Move {
     pub const NULL: Self = Self(0);

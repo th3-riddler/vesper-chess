@@ -13,13 +13,29 @@
 
 use std::{
     cmp::{Reverse, min}, sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
+        Arc, atomic::{AtomicBool, AtomicU64, Ordering},
     }, time::{Duration, Instant},
 };
 
 use crate::{
-    attacks::Tables, bitboard::{Bitboard, Color, PieceType}, board::{Board, NullMoveUndo}, eval::{EvalMask, Weights, evaluate}, moves::{Move, UndoInfo, generate_legal_moves, is_in_check}, see::see, tt::{Bound, TTEntry, TranspositionTable},
+    attacks::Tables,
+    bitboard::{
+        Bitboard,
+        Color,
+        PieceType
+    }, board::{Board, NullMoveUndo},
+    eval::{
+        EvalMask,
+        Weights,
+        evaluate
+    }, 
+    moves::{
+        Move,
+        UndoInfo,
+        generate_legal_moves,
+        is_in_check
+    }, see::see,
+    tt::{Bound, TTEntry, TranspositionTable},
 };
 
 pub(crate) const MATE_VALUE: i32 = 30_000;
@@ -34,19 +50,21 @@ pub struct SearchControl {
     soft_deadline: Instant,
     hard_deadline: Instant,
     stop: Arc<AtomicBool>,
-    nodes: u64,
+    global_nodes: Arc<AtomicU64>,
+    local_nodes: u64,
     aborted: bool,
     killers: [[Move; 2]; MAX_PLY],
     history_score: [[[i32; 64]; 64]; 2],
 }
 
 impl SearchControl {
-    pub fn new(soft_deadline: Instant, hard_deadline: Instant, stop: Arc<AtomicBool>) -> Self {
+    pub fn new(soft_deadline: Instant, hard_deadline: Instant, stop: Arc<AtomicBool>, global_nodes: Arc<AtomicU64>) -> Self {
         SearchControl {
             soft_deadline,
             hard_deadline,
             stop,
-            nodes: 0,
+            global_nodes,
+            local_nodes: 0,
             aborted: false,
             killers: [[Move::NULL; 2]; MAX_PLY],
             history_score: [[[0; 64]; 64]; 2],
@@ -78,13 +96,14 @@ impl SearchControl {
     }
 
     fn poll(&mut self) -> bool {
-        self.nodes += 1;
-        if !self.aborted
-            && self.nodes % 2048 == 0
-            && (self.stop.load(Ordering::Relaxed) || Instant::now() >= self.hard_deadline)
-        {
-            self.aborted = true;
+        self.local_nodes += 1;
+        if !self.aborted && self.local_nodes % 2048 == 0 {
+            self.global_nodes.fetch_add(2048, Ordering::Relaxed);
+            if self.stop.load(Ordering::Relaxed) || Instant::now() >= self.hard_deadline {
+                self.aborted = true;
+            }
         }
+
         self.aborted
     }
 
@@ -92,12 +111,12 @@ impl SearchControl {
         self.aborted
     }
 
-    fn count_node(&mut self) {
-        self.nodes += 1;
+    pub fn total_nodes(&self) -> u64 {
+        self.global_nodes.load(Ordering::Relaxed)
     }
 }
 
-pub struct SearcInfo {
+pub struct SearchInfo {
     pub depth: u32,
     pub score: i32,
     pub nodes: u64,
@@ -214,8 +233,8 @@ fn razor_margin(depth: u32) -> i32 {
 fn negamax(
     board: &mut Board,
     tables: &Tables,
-    tt: &mut TranspositionTable,
-    weights: &mut Weights,
+    tt: &TranspositionTable,
+    weights: &Weights,
     lmr_table: &LMRTable,
     eval_mask: &EvalMask,
     history: &mut Vec<u64>,
@@ -421,16 +440,16 @@ fn negamax(
 fn quiescence(
     board: &mut Board,
     tables: &Tables,
-    tt: &mut TranspositionTable,
-    weights: &mut Weights,
+    tt: &TranspositionTable,
+    weights: &Weights,
     ctrl: &mut SearchControl,
     ply: u32,
     eval_mask: &EvalMask,
     mut alpha: i32,
     beta: i32,
 ) -> i32 {
-    ctrl.count_node();
-    if ctrl.is_aborted() {
+
+    if ctrl.poll() {
         return alpha;
     }
 
@@ -536,7 +555,7 @@ fn quiescence(
 fn extract_pv(
     board: &mut Board,
     tables: &Tables,
-    tt: &mut TranspositionTable,
+    tt: &TranspositionTable,
     max_len: u32,
 ) -> Vec<Move> {
     let mut pv: Vec<Move> = Vec::new();
@@ -574,14 +593,15 @@ fn extract_pv(
 pub fn search_best_move(
     board: &mut Board,
     tables: &Tables,
-    tt: &mut TranspositionTable,
-    weights: &mut Weights,
+    tt: &TranspositionTable,
+    weights: &Weights,
     lmr_table: &LMRTable,
     eval_mask: &EvalMask,
     history: &mut Vec<u64>,
     ctrl: &mut SearchControl,
     max_depth: Option<u32>,
-    mut on_info: impl FnMut(&SearcInfo),
+    start_depth_offset: u32,
+    mut on_info: impl FnMut(&SearchInfo),
 ) -> Move {
     let root_moves: Vec<Move> = generate_legal_moves(board, tables);
     assert!(
@@ -595,7 +615,7 @@ pub fn search_best_move(
     let start: Instant = Instant::now();
 
     let mut score: i32 = 0;
-    for depth in 1..=max_depth.unwrap_or(u32::MAX) {
+    for depth in (1 + start_depth_offset)..=max_depth.unwrap_or(u32::MAX) {
         let soft_duration: Duration = ctrl.soft_deadline.saturating_duration_since(start);
         let shrink: Duration = soft_duration / 3;
         let extend: Duration = soft_duration / 2;
@@ -645,10 +665,10 @@ pub fn search_best_move(
         }
 
         let pv: Vec<Move> = extract_pv(board, tables, tt, depth);
-        on_info(&SearcInfo {
+        on_info(&SearchInfo {
             depth,
             score,
-            nodes: ctrl.nodes,
+            nodes: ctrl.total_nodes(),
             time_ms: start.elapsed().as_millis(),
             pv,
         })

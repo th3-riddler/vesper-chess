@@ -35,6 +35,7 @@ impl AddAssign for Score {
     }
 }
 
+#[derive(Clone, Copy)]
 pub struct EvalMask {
     file: [Bitboard; 8],
     adjacent_files: [Bitboard; 8],

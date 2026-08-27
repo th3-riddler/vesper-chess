@@ -7,6 +7,7 @@ use crate::{
     zobrist::{ZobristKeys, keys},
 };
 
+#[derive(Clone, Copy)]
 pub struct Board {
     pub pieces: [[Bitboard; 6]; 2],
     pub side_to_move: Color,
