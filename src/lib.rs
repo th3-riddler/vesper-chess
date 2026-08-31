@@ -8,5 +8,6 @@ pub mod see;
 pub mod tt;
 pub mod uci;
 pub mod zobrist;
+pub mod trace;
 
 pub mod perft;
