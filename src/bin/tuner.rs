@@ -225,7 +225,7 @@ fn gradient(positions: &[TuningPosition], w: &[f64], k: f64) -> Vec<f64> {
             }
         );
     
-    let n = positions.len() as f64;
+    let n: f64 = positions.len() as f64;
     summed.into_iter().map(|g| g / n).collect()
 }
 
