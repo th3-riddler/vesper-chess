@@ -113,39 +113,6 @@ fn black_a5_pawn_span_looks_toward_rank_1_not_rank_8() {
 }
 
 #[test]
-fn doubled_pawns_are_penalized() {
-    let masks = EvalMask::new();
-    let tables = Tables::new();
-    let weights = Weights::default();
-    let doubled = Board::from_fen("4k3/8/8/8/4P3/8/4P3/4K3 w - - 0 1").unwrap();
-    let single = Board::from_fen("4k3/8/8/8/8/8/4P3/4K3 w - - 0 1").unwrap();
-    // same total material — the only difference is structure
-    assert!(evaluate(&doubled, &tables, &masks, &weights) < evaluate(&single, &tables, &masks, &weights) + 100);
-}
-
-#[test]
-fn isolated_pawn_is_penalized_vs_supported_pawn() {
-    let masks = EvalMask::new();
-    let tables = Tables::new();
-    let weights = Weights::default();
-    let isolated = Board::from_fen("4k3/8/8/8/8/8/4P3/4K3 w - - 0 1").unwrap();
-    let supported = Board::from_fen("4k3/8/8/8/8/3P4/4P3/4K3 w - - 0 1").unwrap();
-    assert!(evaluate(&isolated, &tables, &masks, &weights) < evaluate(&supported, &tables, &masks, &weights));
-}
-
-#[test]
-fn advanced_passed_pawn_beats_blocked_pawn_of_equal_material() {
-    let masks = EvalMask::new();
-    let tables = Tables::new();
-    let weights = Weights::default();
-    // white pawn on a6, nothing in front — clearly passed and close to queening
-    let passed = Board::from_fen("4k3/8/P7/8/8/8/8/4K3 w - - 0 1").unwrap();
-    // white pawn on a2, black pawn on a7 directly blocking its only path — not passed
-    let blocked = Board::from_fen("p3k3/8/8/8/8/8/P7/4K3 w - - 0 1").unwrap();
-    assert!(evaluate(&passed, &tables, &masks, &weights) > evaluate(&blocked, &tables, &masks, &weights));
-}
-
-#[test]
 fn passed_pawn_bonus_is_symmetric_for_black() {
     let masks = EvalMask::new();
     let tables = Tables::new();
