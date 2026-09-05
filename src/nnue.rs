@@ -14,7 +14,7 @@ pub struct Network {
 }
 
 pub static NNUE: Network =
-    unsafe { std::mem::transmute(*include_bytes!("nnue/quantised.bin")) };
+    unsafe { std::mem::transmute(*include_bytes!("nnue/vesper_net.bin")) };
 
 #[derive(Clone, Copy)]
 #[repr(C, align(64))]
