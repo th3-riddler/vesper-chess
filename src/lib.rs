@@ -9,5 +9,6 @@ pub mod tt;
 pub mod uci;
 pub mod zobrist;
 pub mod trace;
+pub mod nnue;
 
 pub mod perft;

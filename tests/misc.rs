@@ -1,5 +1,5 @@
 use vesper::{
-    attacks::Tables, bitboard::Color, board::Board, eval::{EvalMask, evaluate, Weights}, moves::{Move, MoveFlag, generate_legal_moves}, see::see,
+    attacks::Tables, bitboard::Color, board::Board, eval::{EvalMask, EvalMode, Weights, evaluate}, moves::{Move, MoveFlag, generate_legal_moves}, see::see,
 };
 
 #[test]
@@ -76,7 +76,7 @@ fn central_knight_beats_corner_knight_for_white() {
     let weights = Weights::default();
     let central = Board::from_fen("4k3/8/8/3N4/8/8/8/4K3 w - - 0 1").unwrap();
     let corner = Board::from_fen("4k3/8/8/8/8/8/8/N3K3 w - - 0 1").unwrap();
-    assert!(evaluate(&central, &tables, &e, &weights) > evaluate(&corner, &tables,  &e, &weights), "centralized knight should score higher");
+    assert!(evaluate(&central, &tables, &e, &weights, &EvalMode::Classical) > evaluate(&corner, &tables,  &e, &weights, &EvalMode::Classical), "centralized knight should score higher");
 }
 
 #[test]
@@ -86,7 +86,7 @@ fn central_knight_beats_corner_knight_for_black() {
     let weights = Weights::default();
     let central = Board::from_fen("4k3/8/3n4/8/8/8/8/4K3 b - - 0 1").unwrap();
     let corner = Board::from_fen("4k3/8/8/8/8/8/8/n3K3 b - - 0 1").unwrap();
-    assert!(evaluate(&central, &tables, &e, &weights) > evaluate(&corner, &tables, &e, &weights), "eval is from side-to-move's perspective — black benefits from centralizing too");
+    assert!(evaluate(&central, &tables, &e, &weights, &EvalMode::Classical) > evaluate(&corner, &tables, &e, &weights, &EvalMode::Classical), "eval is from side-to-move's perspective — black benefits from centralizing too");
 }
 
 #[test]
@@ -120,7 +120,7 @@ fn passed_pawn_bonus_is_symmetric_for_black() {
     // black pawn on a3, nothing between it and rank 1 — passed, close to queening, black to move
     let board = Board::from_fen("4k3/8/8/8/8/p7/8/4K3 b - - 0 1").unwrap();
     // from Black's own perspective (evaluate returns side-to-move relative), this should score well for Black
-    assert!(evaluate(&board, &tables, &masks, &weights) > 0);
+    assert!(evaluate(&board, &tables, &masks, &weights, &EvalMode::Classical) > 0);
 }
 
 #[test]
@@ -132,5 +132,13 @@ fn passed_pawn_bonus_is_symmetric_in_magnitude() {
     let white_advanced = Board::from_fen("4k3/8/4P3/8/8/8/8/4K3 w - - 0 1").unwrap();
     let black_advanced = Board::from_fen("4k3/8/8/8/8/4p3/8/4K3 b - - 0 1").unwrap();
     // both scores are from side-to-move's perspective — they should be equal if the term is symmetric
-    assert_eq!(evaluate(&white_advanced, &tables, &masks, &weights), evaluate(&black_advanced, &tables, &masks, &weights));
+    assert_eq!(evaluate(&white_advanced, &tables, &masks, &weights, &EvalMode::Classical), evaluate(&black_advanced, &tables, &masks, &weights, &EvalMode::Classical));
+}
+
+#[test]
+fn fen_convertion_roundtrip() {
+    let fen = "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1";
+    let board = Board::from_fen(fen).unwrap();
+    let roundtrip = board.to_fen();
+    assert_eq!(fen, roundtrip, "FEN roundtrip failed for {}", fen);
 }

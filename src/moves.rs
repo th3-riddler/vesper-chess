@@ -1,7 +1,5 @@
 use crate::{
-    attacks::{BISHOP_DIRS, ROOK_DIRS, Tables, sliding_attacks},
-    bitboard::{Bitboard, Color, PieceType},
-    board::Board,
+    attacks::{BISHOP_DIRS, ROOK_DIRS, Tables, sliding_attacks}, bitboard::{Bitboard, Color, PieceType}, board::Board, nnue::Accumulator,
 };
 
 #[derive(Copy, Clone, Eq, Hash, PartialEq, Debug)]
@@ -100,11 +98,12 @@ pub struct UndoInfo {
     en_passant: Option<u8>,
     halfmove_clock: u16,
     zobrist_key: u64,
+    accumulators: [Accumulator; 2],
 }
 
 impl UndoInfo {
     pub fn new( piece: PieceType, captured: Option<PieceType>, castling_rights: u8,
-        en_passant: Option<u8>, halfmove_clock: u16, zobrist_key: u64,
+        en_passant: Option<u8>, halfmove_clock: u16, zobrist_key: u64, accumulators: [Accumulator; 2],
     ) -> Self {
         Self {
             piece,
@@ -113,6 +112,7 @@ impl UndoInfo {
             en_passant,
             halfmove_clock,
             zobrist_key,
+            accumulators
         }
     }
     pub fn piece(&self) -> PieceType {
@@ -132,6 +132,9 @@ impl UndoInfo {
     }
     pub fn zobrist_key(&self) -> u64 {
         self.zobrist_key
+    }
+    pub fn accumulators(&self) -> [Accumulator; 2] {
+        self.accumulators
     }
 }
 

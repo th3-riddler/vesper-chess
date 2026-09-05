@@ -5,16 +5,13 @@ use std::{
 };
 
 use crate::{
-    attacks::Tables,
-    bitboard::{
+    attacks::Tables, bitboard::{
         Bitboard, Color, PieceType
-    }, board::Board,
-    moves::{
+    }, board::Board, eval::{EvalMask, EvalMode, Weights}, moves::{
         Move,
         MoveFlag,
         generate_legal_moves
-    }, eval::{EvalMask, Weights},
-    search::{
+    }, search::{
         LMRTable,
         MATE_THRESHOLD,
         MATE_VALUE,
@@ -136,13 +133,13 @@ fn handle_position_command(
     board
 }
 
-struct GoParams {
-    depth: Option<u32>,
-    movetime: Option<u64>,
-    wtime: Option<u64>,
-    btime: Option<u64>,
-    winc: Option<u64>,
-    binc: Option<u64>,
+pub struct GoParams {
+    pub depth: Option<u32>,
+    pub movetime: Option<u64>,
+    pub wtime: Option<u64>,
+    pub btime: Option<u64>,
+    pub winc: Option<u64>,
+    pub binc: Option<u64>,
 }
 
 fn parse_go_command(mut tokens: SplitWhitespace) -> GoParams {
@@ -190,7 +187,7 @@ fn compute_soft_hard_ms(time: u64, inc: u64) -> (u64, u64) {
     (soft_ms, hard_ms)
 }
 
-fn compute_deadline(p: &GoParams, stm: Color) -> (Instant, Instant, Option<u32>) {
+pub fn compute_deadline(p: &GoParams, stm: Color) -> (Instant, Instant, Option<u32>) {
     let now: Instant = Instant::now();
     if let Some(d) = p.depth {
         let far_future: Instant = now + Duration::from_secs(3600);
@@ -244,6 +241,7 @@ pub fn uci_loop() {
     let history: Arc<Mutex<Vec<u64>>> = Arc::new(Mutex::new(vec![board.lock().unwrap().zobrist_key]));
     let lmr_table: Arc<LMRTable> = Arc::new(LMRTable::new());
     let eval_mask: Arc<EvalMask> = Arc::new(EvalMask::new());
+    let mut eval_mode: Arc<EvalMode> = Arc::new(EvalMode::NNUE);
     let stop_flag: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
     let mut search_handles: Vec<thread::JoinHandle<()>> = Vec::new();
     let num_threads: AtomicUsize = AtomicUsize::new(1);
@@ -258,6 +256,7 @@ pub fn uci_loop() {
                 println!("id author Redux");
                 println!("option name Threads type spin default 1 min 1 max 16");
                 println!("option name Hash type spin default 64 min 1 max 1024");
+                println!("option name UseNNUE type check default true");
                 println!("uciok");
             }
             Some("setoption") => {
@@ -280,6 +279,11 @@ pub fn uci_loop() {
                             tt = Arc::new(TranspositionTable::new(n.max(1).min(1024)));
                         }
                     }
+                    if name.eq_ignore_ascii_case("UseNNUE") {
+                        let value: String = rest[vi + 1..].join(" ");
+                        eval_mode = Arc::new(if value.eq_ignore_ascii_case("true") { EvalMode::NNUE } else { EvalMode::Classical });
+                    }
+                        
                 }
             }
             Some("isready") => {
@@ -313,12 +317,13 @@ pub fn uci_loop() {
                 for thread_id in 0..n {
                     let mut thread_board: Board = root_board.clone();
                     let mut thread_history: Vec<u64> = root_history.clone();
-                    let (tables, masks, weights, tt, lmr_table) = (
+                    let (tables, masks, weights, tt, lmr_table, eval_mode) = (
                         Arc::clone(&tables),
                         Arc::clone(&eval_mask),
                         Arc::clone(&weights),
                         Arc::clone(&tt),
-                        Arc::clone(&lmr_table)
+                        Arc::clone(&lmr_table),
+                        Arc::clone(&eval_mode),
                     );
                     let stop_flag: Arc<AtomicBool> = Arc::clone(&stop_flag);
                     let global_nodes: Arc<AtomicU64> = Arc::clone(&global_nodes);
@@ -343,7 +348,7 @@ pub fn uci_loop() {
 
                         let best_move: Move = search_best_move(
                             &mut thread_board, &tables, &tt, &weights, &lmr_table, &masks,
-                            &mut thread_history, &mut ctrl, max_depth, depth_offset, on_info
+                            &mut thread_history, &mut ctrl, max_depth, depth_offset, &eval_mode, on_info
                         );
 
                         if is_main {

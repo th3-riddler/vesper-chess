@@ -1,10 +1,7 @@
 use std::str::SplitWhitespace;
 
 use crate::{
-    bitboard::{Bitboard, Color, PieceType},
-    moves::{Move, MoveFlag, UndoInfo},
-    uci::square_from_algebraic,
-    zobrist::{ZobristKeys, keys},
+    bitboard::{Bitboard, Color, PieceType}, moves::{Move, MoveFlag, UndoInfo}, nnue::{self, Accumulator, NNUE}, uci::{square_from_algebraic, square_to_algebraic}, zobrist::{ZobristKeys, keys},
 };
 
 #[derive(Clone, Copy)]
@@ -16,6 +13,7 @@ pub struct Board {
     pub halfmove_clock: u16,
     pub fullmove_number: u16,
     pub zobrist_key: u64,
+    pub accumulators: [Accumulator; 2],
 }
 
 pub struct NullMoveUndo {
@@ -51,6 +49,7 @@ impl Board {
             halfmove_clock: halfmove,
             fullmove_number: fullmove,
             zobrist_key: 0,
+            accumulators: [Accumulator::new(&NNUE), Accumulator::new(&NNUE)],
         };
 
         let mut square: i32 = 56;
@@ -61,7 +60,7 @@ impl Board {
                 _ => {
                     let (color, piece) = piece_from_fen_char(&c)
                         .ok_or_else(|| format!("Invalid piece character: {}", c))?;
-                    board.pieces[color as usize][piece as usize].set(square as u8);
+                    board.place_piece(color, piece, square as u8);
                     square += 1
                 }
             }
@@ -104,6 +103,22 @@ impl Board {
         .find(|&pt| self.pieces[color as usize][pt as usize].is_set(square))
     }
 
+    fn place_piece(&mut self, color: Color, piece: PieceType, square: u8) {
+        self.pieces[color as usize][piece as usize].0 |= 1u64 << square;
+        for perspective in [Color::White, Color::Black] {
+            let idx: usize = nnue::feature_index(perspective, piece as usize, color, square as usize);
+            self.accumulators[perspective as usize].add_feature(idx, &NNUE);
+        }
+    }
+
+    fn remove_piece(&mut self, color: Color, piece: PieceType, square: u8) {
+        self.pieces[color as usize][piece as usize].0 &= !(1u64 << square);
+        for perspective in [Color::White, Color::Black] {
+            let idx: usize = nnue::feature_index(perspective, piece as usize, color, square as usize);
+            self.accumulators[perspective as usize].remove_feature(idx, &NNUE);
+        }
+    }
+
     pub fn make_move(&mut self, mv: Move) -> UndoInfo {
         let (from, to, flag) = (mv.from(), mv.to(), mv.flag());
         let stm: Color = self.side_to_move;
@@ -124,22 +139,23 @@ impl Board {
             self.en_passant,
             self.halfmove_clock,
             self.zobrist_key,
+            self.accumulators
         );
 
         // Remove the piece from the from-square
-        self.pieces[stm as usize][piece as usize].0 &= !(1u64 << from);
+        self.remove_piece(stm, piece, from);
         self.zobrist_key ^= keys.piece(stm, piece, from);
 
         // Handle captures and en passant
         match flag {
             MoveFlag::EnPassant => {
                 let square: u8 = if stm == Color::White { to - 8 } else { to + 8 };
-                self.pieces[opp as usize][PieceType::Pawn as usize].0 &= !(1u64 << square);
+                self.remove_piece(opp, PieceType::Pawn, square);
                 self.zobrist_key ^= keys.piece(opp, PieceType::Pawn, square);
             }
             _ if flag.is_capture() => {
                 let cap: PieceType = captured.unwrap();
-                self.pieces[opp as usize][cap as usize].0 &= !(1u64 << to);
+                self.remove_piece(opp, cap, to);
                 self.zobrist_key ^= keys.piece(opp, cap, to);
             }
             _ => {}
@@ -147,7 +163,7 @@ impl Board {
 
         // Update the piece on the to-square, considering promotion if applicable
         let landing: PieceType = flag.promotion_piece().unwrap_or(piece);
-        self.pieces[stm as usize][landing as usize].0 |= 1u64 << to;
+        self.place_piece(stm, landing, to);
         self.zobrist_key ^= keys.piece(stm, landing, to);
 
         // Update castling rights
@@ -201,20 +217,20 @@ impl Board {
         }
 
         // Remove the piece from the to-square
-        let landing: PieceType = flag.promotion_piece().unwrap_or_else(|| undo.piece());
-        self.pieces[stm as usize][landing as usize].0 &= !(1u64 << to);
+        let landing: PieceType = flag.promotion_piece().unwrap_or(undo.piece());
+        self.remove_piece(stm, landing, to);
 
         // Restore the piece to the from-square
-        self.pieces[stm as usize][undo.piece() as usize].0 |= 1u64 << from;
+        self.place_piece(stm, undo.piece(), from);
 
         // Restore captured piece if any
         match flag {
             MoveFlag::EnPassant => {
                 let square: u8 = if stm == Color::White { to - 8 } else { to + 8 };
-                self.pieces[opp as usize][PieceType::Pawn as usize].0 |= 1u64 << square;
+                self.place_piece(opp, PieceType::Pawn, square);
             }
             _ if flag.is_capture() => {
-                self.pieces[opp as usize][undo.captured().unwrap() as usize].0 |= 1u64 << to;
+                self.place_piece(opp, undo.captured().unwrap(), to);
             }
             _ => {}
         }
@@ -229,21 +245,22 @@ impl Board {
         self.en_passant = undo.en_passant();
         self.castling_rights = undo.castling_rights();
         self.halfmove_clock = undo.halfmove_clock();
+        self.accumulators = undo.accumulators();
         self.zobrist_key = undo.zobrist_key();
     }
 
     fn _move_rook_for_castle(&mut self, stm: Color, keys: &ZobristKeys, kingside: bool) {
         let (rook_from, rook_to) = _castle_rook_squares(stm, kingside);
-        self.pieces[stm as usize][PieceType::Rook as usize].0 &= !(1u64 << rook_from);
-        self.pieces[stm as usize][PieceType::Rook as usize].0 |= 1u64 << rook_to;
+        self.remove_piece(stm, PieceType::Rook, rook_from);
+        self.place_piece(stm, PieceType::Rook, rook_to);
         self.zobrist_key ^= keys.piece(stm, PieceType::Rook, rook_from);
         self.zobrist_key ^= keys.piece(stm, PieceType::Rook, rook_to);
     }
 
     fn _undo_rook_for_castle(&mut self, stm: Color, kingside: bool) {
         let (rook_from, rook_to) = _castle_rook_squares(stm, kingside);
-        self.pieces[stm as usize][PieceType::Rook as usize].0 &= !(1u64 << rook_to);
-        self.pieces[stm as usize][PieceType::Rook as usize].0 |= 1u64 << rook_from;
+        self.remove_piece(stm, PieceType::Rook, rook_to);
+        self.place_piece(stm, PieceType::Rook, rook_from);
     }
 
     pub fn make_null_move(&mut self) -> NullMoveUndo {
@@ -302,7 +319,7 @@ impl Board {
                 PieceType::Queen,
                 PieceType::King,
             ] {
-                let mut bb = self.pieces[color as usize][piece as usize];
+                let mut bb: Bitboard = self.pieces[color as usize][piece as usize];
                 while let Some(sq) = bb.pop_lsb() {
                     key ^= keys.piece(color, piece, sq)
                 }
@@ -317,6 +334,62 @@ impl Board {
         }
 
         key
+    }
+
+    pub fn to_fen(&self) -> String {
+        let mut fen: String = String::new();
+
+        for rank in (0..8u8).rev() {
+            let mut empty: u8 = 0;
+            for file in 0..8u8 {
+                let square: u8 = rank * 8 + file;
+                let occupant: Option<(Color, PieceType)> = [Color::White, Color::Black]
+                    .into_iter()
+                    .find_map(|c| self.piece_on(c, square).map(|p| (c, p)));
+
+                match occupant {
+                    Some((color, piece)) => {
+                        if empty > 0 {
+                            fen.push_str(&empty.to_string());
+                            empty = 0;
+                        }
+                        fen.push(piece_to_fen_char(color, piece));
+                    },
+                    None => empty += 1,
+                }
+            }
+            if empty > 0 {
+                fen.push_str(&empty.to_string());
+            }
+            if rank > 0 {
+                fen.push('/');
+            }
+        }
+    
+        fen.push(' ');
+        fen.push(if self.side_to_move == Color::White { 'w' } else { 'b' });
+
+        fen.push(' ');
+        let mut castling: String = String::new();
+        if self.castling_rights & 0b0001 != 0 { castling.push('K'); }
+        if self.castling_rights & 0b0010 != 0 { castling.push('Q'); }
+        if self.castling_rights & 0b0100 != 0 { castling.push('k'); }
+        if self.castling_rights & 0b1000 != 0 { castling.push('q'); }
+        fen.push_str(if castling.is_empty() { "-" } else { &castling });
+
+        fen.push(' ');
+        match self.en_passant {
+            Some(sq) => fen.push_str(&square_to_algebraic(sq)),
+            None => fen.push('-'),
+        }
+
+        fen.push(' ');
+        fen.push_str(&self.halfmove_clock.to_string());
+        
+        fen.push(' ');
+        fen.push_str(&self.fullmove_number.to_string());
+
+        fen
     }
 }
 
@@ -360,4 +433,20 @@ fn piece_from_fen_char(c: &char) -> Option<(Color, PieceType)> {
     }
 }
 
-// TODO: Implement a function to convert a Board back to FEN notation
+/* Returns the FEN character for a given color and piece type */
+fn piece_to_fen_char(color: Color, piece: PieceType) -> char {
+    match (color, piece) {
+        (Color::Black, PieceType::Pawn) => 'p',
+        (Color::Black, PieceType::Knight) => 'n',
+        (Color::Black, PieceType::Bishop) => 'b',
+        (Color::Black, PieceType::Rook) => 'r',
+        (Color::Black, PieceType::Queen) => 'q',
+        (Color::Black, PieceType::King) => 'k',
+        (Color::White, PieceType::Pawn) => 'P',
+        (Color::White, PieceType::Knight) => 'N',
+        (Color::White, PieceType::Bishop) => 'B',
+        (Color::White, PieceType::Rook) => 'R',
+        (Color::White, PieceType::Queen) => 'Q',
+        (Color::White, PieceType::King) => 'K',
+    }
+}

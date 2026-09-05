@@ -1,6 +1,6 @@
 use std::{ops::{Add, AddAssign, Sub}};
 
-use crate::{attacks::{Tables, mask_king_attacks}, bitboard::{Bitboard, Color, PieceType}, board::Board};
+use crate::{attacks::{Tables, mask_king_attacks}, bitboard::{Bitboard, Color, PieceType}, board::Board, nnue};
 
 #[derive(Clone, Copy, Default)]
 struct Score {
@@ -449,7 +449,7 @@ fn evaluate_king_safety(king_info: &KingEvalInfo, weights: &Weights, color: Colo
     score
 }
 
-pub fn evaluate(board: &Board, tables: &Tables, masks: &EvalMask, weights: &Weights) -> i32 {
+pub fn evaluate_classical(board: &Board, tables: &Tables, masks: &EvalMask, weights: &Weights) -> i32 {
     let mut score: Score = Score::default();
     let mut phase: i32 = 0;
     let mut king_info: KingEvalInfo = KingEvalInfo::default();
@@ -471,4 +471,18 @@ pub fn evaluate(board: &Board, tables: &Tables, masks: &EvalMask, weights: &Weig
     }
 
     final_score
+}
+
+#[derive(Clone, Copy)]
+pub enum EvalMode { Classical, NNUE }
+
+pub fn evaluate(board: &Board, tables: &Tables, masks: &EvalMask, weights: &Weights, eval_mode: &EvalMode) -> i32 {
+    match eval_mode {
+        EvalMode::Classical => evaluate_classical(board, tables, masks, weights),
+        EvalMode::NNUE => {
+            let us: nnue::Accumulator = board.accumulators[board.side_to_move as usize];
+            let them: nnue::Accumulator = board.accumulators[board.side_to_move.opposite() as usize];
+            nnue::NNUE.evaluate(&us, &them)
+        }
+    }
 }

@@ -9,7 +9,7 @@ use std::{
 
 use rayon::prelude::*;
 use vesper::{
-    attacks::Tables, bitboard::Color, board::Board, eval::{EvalMask, Weights, evaluate}, trace::{Trace, trace},
+    attacks::Tables, bitboard::Color, board::Board, eval::{EvalMask, EvalMode, Weights, evaluate}, trace::{Trace, trace},
 };
 
 struct TuningPosition {
@@ -157,7 +157,7 @@ fn mean_squared_error_real_eval(positions: &[TuningPosition], tables: &Tables, m
     let total: f64 = positions
         .par_iter()
         .map(|pos: &TuningPosition| {
-            let raw: f64 = evaluate(&pos.board, tables, masks, weights) as f64;
+            let raw: f64 = evaluate(&pos.board, tables, masks, weights, &EvalMode::Classical) as f64;
             let white_relative: f64 = if pos.board.side_to_move == Color::White { raw } else { -raw };
             (pos.result - sigmoid(white_relative, k)).powi(2)
         })
