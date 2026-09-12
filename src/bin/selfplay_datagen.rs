@@ -1,6 +1,6 @@
 use std::{fs::File, io::{BufWriter, Write}, sync::{Arc, atomic::{AtomicBool, AtomicU64, Ordering}}, time::Instant};
 
-use vesper::{attacks::Tables, bitboard::Color, board::Board, eval::{EvalMask, EvalMode, Weights}, moves::{Move, generate_legal_moves, is_in_check}, search::{LMRTable, SearchControl, SearchInfo, is_repetition, search_best_move}, tt::TranspositionTable};
+use vesper::{attacks::Tables, bitboard::Color, board::Board, eval::{EvalMask, EvalMode, Weights}, moves::{Move, generate_legal_moves, is_in_check}, search::{LMRTable, MATE_THRESHOLD, MATE_VALUE, SearchControl, SearchInfo, is_repetition, search_best_move}, tt::TranspositionTable};
 use rand::{Rng, RngExt};
 
 const MIN_OPENING_PLIES: usize = 6;
@@ -14,8 +14,6 @@ const DRAW_ADJUDICATION_PLIES: usize = 10;
 const NODE_LIMIT: u64 = 20_000;
 const SAMPLE_PROBABILITY: f64 = 0.5;
 const MAX_GAME_LEN: usize = 600;
-
-const APPROX_MATE_THRESHOLD: i32 = 29_000;
 
 struct Searcher {
     tables: Tables,
@@ -96,11 +94,20 @@ fn play_game(rng: &mut impl Rng, searcher: &mut Searcher) -> (Vec<SampledPositio
     for _ in 0..MAX_GAME_LEN {
         let moves: Vec<Move> = generate_legal_moves(&board, &searcher.tables);
         if moves.is_empty() {
-            let result = if is_in_check(&board, &searcher.tables) {
+            let in_check: bool = is_in_check(&board, &searcher.tables);
+            let result: f64 = if is_in_check(&board, &searcher.tables) {
                 if board.side_to_move == Color::White { 0.0 } else { 1.0 }
             } else {
                 0.5
             };
+
+            let stm_relative: i32 = if in_check { -MATE_VALUE } else { 0 };
+            let white_relative: i32 = if board.side_to_move == Color::White { stm_relative } else { -stm_relative };
+            samples.push(SampledPosition {
+                fen: board.to_fen(),
+                score_white_relative: white_relative,
+            });
+            
             return (samples, result);
         }
 
@@ -135,7 +142,7 @@ fn play_game(rng: &mut impl Rng, searcher: &mut Searcher) -> (Vec<SampledPositio
             consecutive_drawish = 0;
         }
 
-        let quiet: bool = !in_check_before && !mv.flag().is_capture() && score.abs() < APPROX_MATE_THRESHOLD;
+        let quiet: bool = !in_check_before && !mv.flag().is_capture() && score.abs() < MATE_THRESHOLD;
 
         if quiet && rng.random_bool(SAMPLE_PROBABILITY) {
             samples.push(SampledPosition {
