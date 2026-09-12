@@ -1,4 +1,4 @@
-use crate::bitboard::Color;
+use crate::{bitboard::{Color, PieceType}, board::Board};
 
 pub const HIDDEN_SIZE: usize = 512;
 const SCALE: i32 = 400;
@@ -14,7 +14,7 @@ pub struct Network {
 }
 
 pub static NNUE: Network =
-    unsafe { std::mem::transmute(*include_bytes!("nnue/vesper_net.bin")) };
+    unsafe { std::mem::transmute(*include_bytes!("nnue/vesper_net_gen-2.bin")) };
 
 #[derive(Clone, Copy)]
 #[repr(C, align(64))]
@@ -73,4 +73,87 @@ pub fn feature_index(perspective: Color, piece_type: usize, color: Color, square
     let sq: usize = if perspective == Color::White { square } else { square ^ 56 };
 
     64 * piece_offset + sq
+}
+
+const ALL_PIECES: [PieceType; 6] = [
+    PieceType::Pawn,
+    PieceType::Knight,
+    PieceType::Bishop,
+    PieceType::Rook,
+    PieceType::Queen,
+    PieceType::King,
+];
+
+#[derive(Clone, Copy, Default)]
+pub struct FeatureDiff {
+    removed: [Option<(Color, PieceType, u8)>; 2],
+    added: [Option<(Color, PieceType, u8)>; 2]
+}
+
+impl FeatureDiff {
+    pub fn push_removed(&mut self, color: Color, piece: PieceType, square: u8) {
+        let slot: &mut Option<(Color, PieceType, u8)> = self.removed.iter_mut().find(|s| s.is_none())
+            .expect("FeatureDiff can only record 2 removals per move");
+
+        *slot = Some((color, piece, square));
+    }
+
+    pub fn push_added(&mut self, color: Color, piece: PieceType, square: u8) {
+        let slot: &mut Option<(Color, PieceType, u8)> = self.added.iter_mut().find(|s| s.is_none())
+            .expect("FeatureDiff can only record 2 additions per move");
+
+        *slot = Some((color, piece, square));
+    }
+}
+
+#[derive(Clone)]
+pub struct AccumulatorStack {
+    stack: Vec<[Accumulator; 2]>
+}
+
+impl AccumulatorStack {
+    pub fn new(board: &Board) -> Self {
+        let mut pair: [Accumulator; 2] = [Accumulator::new(&NNUE), Accumulator::new(&NNUE)];
+
+        for color in [Color::White, Color::Black] {
+            for piece in ALL_PIECES {
+                let mut bb = board.pieces[color as usize][piece as usize];
+                while let Some(square) = bb.pop_lsb() {
+                    for perspective in [Color::White, Color::Black] {
+                        let idx = feature_index(perspective, piece as usize, color, square as usize);
+                        pair[perspective as usize].add_feature(idx, &NNUE);
+                    }
+                }
+            }
+        }
+
+        Self { stack: vec![pair] }
+    }
+
+    pub fn push(&mut self, diff: &FeatureDiff) {
+        let mut next: [Accumulator; 2] = *self.stack.last().expect("accumulator stack is empty");
+
+        for perspective in [Color::White, Color::Black] {
+            for (color, piece, square) in diff.removed.into_iter().flatten() {
+                let idx: usize = feature_index(perspective, piece as usize, color, square as usize);
+                next[perspective as usize].remove_feature(idx, &NNUE);
+            }
+
+            for (color, piece, square) in diff.added.into_iter().flatten() {
+                let idx: usize = feature_index(perspective, piece as usize, color, square as usize);
+                next[perspective as usize].add_feature(idx, &NNUE);
+            }
+        }
+
+        self.stack.push(next);
+    }
+
+    pub fn pop(&mut self) {
+        self.stack.pop().expect("accumulator stack underflow: pop without matching push");
+    }
+
+    pub fn current(&self, stm: Color) -> (&Accumulator, &Accumulator) {
+        let top: &[Accumulator; 2] = self.stack.last().expect("accumulator stack is empty");
+        (&top[stm as usize], &top[stm.opposite() as usize])
+    }
 }

@@ -1,7 +1,7 @@
 use std::str::SplitWhitespace;
 
 use crate::{
-    bitboard::{Bitboard, Color, PieceType}, moves::{Move, MoveFlag, UndoInfo}, nnue::{self, Accumulator, NNUE}, uci::{square_from_algebraic, square_to_algebraic}, zobrist::{ZobristKeys, keys},
+    bitboard::{Bitboard, Color, PieceType}, moves::{Move, MoveFlag, UndoInfo}, uci::{square_from_algebraic, square_to_algebraic}, zobrist::{ZobristKeys, keys},
 };
 
 #[derive(Clone, Copy)]
@@ -13,7 +13,6 @@ pub struct Board {
     pub halfmove_clock: u16,
     pub fullmove_number: u16,
     pub zobrist_key: u64,
-    pub accumulators: [Accumulator; 2],
 }
 
 pub struct NullMoveUndo {
@@ -49,7 +48,6 @@ impl Board {
             halfmove_clock: halfmove,
             fullmove_number: fullmove,
             zobrist_key: 0,
-            accumulators: [Accumulator::new(&NNUE), Accumulator::new(&NNUE)],
         };
 
         let mut square: i32 = 56;
@@ -105,21 +103,13 @@ impl Board {
 
     fn place_piece(&mut self, color: Color, piece: PieceType, square: u8) {
         self.pieces[color as usize][piece as usize].0 |= 1u64 << square;
-        for perspective in [Color::White, Color::Black] {
-            let idx: usize = nnue::feature_index(perspective, piece as usize, color, square as usize);
-            self.accumulators[perspective as usize].add_feature(idx, &NNUE);
-        }
     }
 
     fn remove_piece(&mut self, color: Color, piece: PieceType, square: u8) {
         self.pieces[color as usize][piece as usize].0 &= !(1u64 << square);
-        for perspective in [Color::White, Color::Black] {
-            let idx: usize = nnue::feature_index(perspective, piece as usize, color, square as usize);
-            self.accumulators[perspective as usize].remove_feature(idx, &NNUE);
-        }
     }
 
-    pub fn make_move(&mut self, mv: Move) -> UndoInfo {
+    pub fn make_move_tracked(&mut self, mv: Move, mut on_remove: impl FnMut(Color, PieceType, u8), mut on_add: impl FnMut(Color, PieceType, u8)) -> UndoInfo {
         let (from, to, flag) = (mv.from(), mv.to(), mv.flag());
         let stm: Color = self.side_to_move;
         let opp: Color = stm.opposite();
@@ -139,11 +129,11 @@ impl Board {
             self.en_passant,
             self.halfmove_clock,
             self.zobrist_key,
-            self.accumulators
         );
 
         // Remove the piece from the from-square
         self.remove_piece(stm, piece, from);
+        on_remove(stm, piece, from);
         self.zobrist_key ^= keys.piece(stm, piece, from);
 
         // Handle captures and en passant
@@ -151,11 +141,13 @@ impl Board {
             MoveFlag::EnPassant => {
                 let square: u8 = if stm == Color::White { to - 8 } else { to + 8 };
                 self.remove_piece(opp, PieceType::Pawn, square);
+                on_remove(opp, PieceType::Pawn, square);
                 self.zobrist_key ^= keys.piece(opp, PieceType::Pawn, square);
             }
             _ if flag.is_capture() => {
                 let cap: PieceType = captured.unwrap();
                 self.remove_piece(opp, cap, to);
+                on_remove(opp, cap, to);
                 self.zobrist_key ^= keys.piece(opp, cap, to);
             }
             _ => {}
@@ -164,12 +156,22 @@ impl Board {
         // Update the piece on the to-square, considering promotion if applicable
         let landing: PieceType = flag.promotion_piece().unwrap_or(piece);
         self.place_piece(stm, landing, to);
+        on_add(stm, landing, to);
         self.zobrist_key ^= keys.piece(stm, landing, to);
 
         // Update castling rights
         match flag {
-            MoveFlag::KingSideCastle => self._move_rook_for_castle(stm, keys, true),
-            MoveFlag::QueenSideCastle => self._move_rook_for_castle(stm, keys, false),
+            MoveFlag::KingSideCastle | MoveFlag::QueenSideCastle => {
+                let (rook_from, rook_to) = _castle_rook_squares(stm, flag == MoveFlag::KingSideCastle);
+                
+                self.remove_piece(stm, PieceType::Rook, rook_from);
+                on_remove(stm, PieceType::Rook, rook_from);
+                self.place_piece(stm, PieceType::Rook, rook_to);
+                on_add(stm, PieceType::Rook, rook_to);
+                
+                self.zobrist_key ^= keys.piece(stm, PieceType::Rook, rook_from);
+                self.zobrist_key ^= keys.piece(stm, PieceType::Rook, rook_to);
+            }
             _ => {}
         }
 
@@ -203,6 +205,10 @@ impl Board {
         self.zobrist_key ^= keys.side_to_move();
 
         undo
+    }
+
+    pub fn make_move(&mut self, mv: Move) -> UndoInfo {
+        self.make_move_tracked(mv, |_, _, _| {}, |_, _, _| {})
     }
 
     pub fn unmake_move(&mut self, mv: Move, undo: UndoInfo) {
@@ -245,18 +251,10 @@ impl Board {
         self.en_passant = undo.en_passant();
         self.castling_rights = undo.castling_rights();
         self.halfmove_clock = undo.halfmove_clock();
-        self.accumulators = undo.accumulators();
         self.zobrist_key = undo.zobrist_key();
     }
 
-    fn _move_rook_for_castle(&mut self, stm: Color, keys: &ZobristKeys, kingside: bool) {
-        let (rook_from, rook_to) = _castle_rook_squares(stm, kingside);
-        self.remove_piece(stm, PieceType::Rook, rook_from);
-        self.place_piece(stm, PieceType::Rook, rook_to);
-        self.zobrist_key ^= keys.piece(stm, PieceType::Rook, rook_from);
-        self.zobrist_key ^= keys.piece(stm, PieceType::Rook, rook_to);
-    }
-
+    #[inline]
     fn _undo_rook_for_castle(&mut self, stm: Color, kingside: bool) {
         let (rook_from, rook_to) = _castle_rook_squares(stm, kingside);
         self.remove_piece(stm, PieceType::Rook, rook_to);

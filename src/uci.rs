@@ -311,6 +311,7 @@ pub fn uci_loop() {
 
                 let root_board: Board = board.lock().unwrap().clone();
                 let root_history: Vec<u64> = history.lock().unwrap().clone();
+
                 let (soft_deadline, hard_deadline, max_depth) = compute_deadline(&params, root_board.side_to_move);
                 let global_nodes: Arc<AtomicU64> = Arc::new(AtomicU64::new(0));
 

@@ -1,6 +1,6 @@
 use std::{ops::{Add, AddAssign, Sub}};
 
-use crate::{attacks::{Tables, mask_king_attacks}, bitboard::{Bitboard, Color, PieceType}, board::Board, nnue};
+use crate::{attacks::{Tables, mask_king_attacks}, bitboard::{Bitboard, Color, PieceType}, board::Board, nnue::{self, AccumulatorStack}};
 
 #[derive(Clone, Copy, Default)]
 struct Score {
@@ -167,29 +167,6 @@ pub struct Weights {
     pub outer_ring_weight: [i32; 6],
     pub king_danger_table: [i32; 64],
 }
-
-// impl Default for Weights {
-//     fn default() -> Self {
-//         Weights {
-//             piece_values_mg: PIECE_VALUES_MG,
-//             piece_values_eg: PIECE_VALUES_EG,
-//             pst_mg: PESTO_MG,
-//             pst_eg: PESTO_EG,
-//             doubled_pawn_mg: DOUBLED_PAWN_PENALTY_MG,
-//             doubled_pawn_eg: DOUBLED_PAWN_PENALTY_EG,
-//             isolated_pawn_mg: ISOLATED_PAWN_PENALTY_MG,
-//             isolated_pawn_eg: ISOLATED_PAWN_PENALTY_EG,
-//             passed_pawn_bonus: PASSED_PAWN_BONUS,
-//             bishop_pair_mg: BISHOP_PAIR_BONUS_MG,
-//             bishop_pair_eg: BISHOP_PAIR_BONUS_EG,
-//             mobility_mg: MOBILITY_WEIGHT_MG,
-//             mobility_eg: MOBILITY_WEIGHT_EG,
-//             inner_ring_weight: INNER_RING_WEIGHT,
-//             outer_ring_weight: OUTER_RING_WEIGHT,
-//             king_danger_table: KING_DANGER_TABLE
-//         }
-//     }
-// }
 
 impl Default for Weights {
     fn default() -> Self {
@@ -476,12 +453,15 @@ pub fn evaluate_classical(board: &Board, tables: &Tables, masks: &EvalMask, weig
 #[derive(Clone, Copy)]
 pub enum EvalMode { Classical, NNUE }
 
-pub fn evaluate(board: &Board, tables: &Tables, masks: &EvalMask, weights: &Weights, eval_mode: &EvalMode) -> i32 {
+pub fn evaluate(board: &Board, tables: &Tables, masks: &EvalMask, weights: &Weights, acc_stack: Option<&AccumulatorStack>, eval_mode: &EvalMode) -> i32 {
     match eval_mode {
         EvalMode::Classical => evaluate_classical(board, tables, masks, weights),
         EvalMode::NNUE => {
-            let us: nnue::Accumulator = board.accumulators[board.side_to_move as usize];
-            let them: nnue::Accumulator = board.accumulators[board.side_to_move.opposite() as usize];
+            let owned_stack: Option<AccumulatorStack> = acc_stack.is_none()
+                .then(|| AccumulatorStack::new(board));
+            let stack: &AccumulatorStack = acc_stack.or(owned_stack.as_ref())
+                .expect("NNUE accumulator stack initialization failed");
+            let (us, them) = stack.current(board.side_to_move);
             nnue::NNUE.evaluate(&us, &them)
         }
     }
