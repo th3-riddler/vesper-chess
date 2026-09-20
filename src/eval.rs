@@ -462,7 +462,7 @@ pub fn evaluate(board: &Board, tables: &Tables, masks: &EvalMask, weights: &Weig
             let stack: &AccumulatorStack = acc_stack.or(owned_stack.as_ref())
                 .expect("NNUE accumulator stack initialization failed");
             let (us, them) = stack.current(board.side_to_move);
-            nnue::NNUE.evaluate(&us, &them)
+            nnue::NNUE.evaluate(&us, &them, board)
         }
     }
 }

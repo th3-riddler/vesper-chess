@@ -9,8 +9,8 @@ const QB: i16 = 64;
 pub struct Network {
     feature_weights: [Accumulator; 768],
     feature_bias: Accumulator,
-    output_weights: [i16; 2 * HIDDEN_SIZE],
-    output_bias: i16,
+    output_weights: [[i16; 2 * HIDDEN_SIZE]; 8],
+    output_bias: [i16; 8],
 }
 
 pub static NNUE: Network =
@@ -48,19 +48,25 @@ fn screlu(x: i16) -> i32 {
     y * y
 }
 
+fn get_output_bucket(board: &Board) -> usize {
+    let piece_count: usize = board.all_occupancy().pop_count() as usize;
+    piece_count.saturating_sub(1).div_euclid(4).min(7)
+}
+
 impl Network {
     /// `us` = the accumulator for whoever is to move, `them` = the other one.
-    pub fn evaluate(&self, us: &Accumulator, them: &Accumulator) -> i32 {
+    pub fn evaluate(&self, us: &Accumulator, them: &Accumulator, board: &Board) -> i32 {
         let mut output: i32 = 0;
-        for (&input, &weight) in us.vals.iter().zip(&self.output_weights[..HIDDEN_SIZE]) {
+        let bucket: usize = get_output_bucket(board);
+        for (&input, &weight) in us.vals.iter().zip(&self.output_weights[bucket][..HIDDEN_SIZE]) {
             output += screlu(input) * i32::from(weight);
         }
-        for (&input, &weight) in them.vals.iter().zip(&self.output_weights[HIDDEN_SIZE..]) {
+        for (&input, &weight) in them.vals.iter().zip(&self.output_weights[bucket][HIDDEN_SIZE..]) {
             output += screlu(input) * i32::from(weight);
         }
 
         output /= i32::from(QA);
-        output += i32::from(self.output_bias);
+        output += i32::from(self.output_bias[bucket]);
         output *= SCALE;
         output /= i32::from(QA) * i32::from(QB);
         output
