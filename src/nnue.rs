@@ -48,6 +48,7 @@ fn screlu(x: i16) -> i32 {
     y * y
 }
 
+#[inline]
 fn get_output_bucket(board: &Board) -> usize {
     let piece_count: usize = board.all_occupancy().pop_count() as usize;
     piece_count.saturating_sub(1).div_euclid(4).min(7)

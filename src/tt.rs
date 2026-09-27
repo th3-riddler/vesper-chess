@@ -49,7 +49,7 @@ pub struct TranspositionTable {
 impl TranspositionTable {
     pub fn new(size_mb: usize) -> Self {
         let count: usize = (size_mb * 1024 * 1024) / std::mem::size_of::<TTSlot>();
-        let capacity: usize = count.next_power_of_two() / 2;
+        let capacity: usize = 1usize << (usize::BITS - 1 - count.leading_zeros());
         let entries: Vec<TTSlot> = (0..capacity).map(|_| TTSlot { key: AtomicU64::new(0), data: AtomicU64::new(0) }).collect();
 
         Self { entries, mask: capacity - 1 }

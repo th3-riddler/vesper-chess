@@ -255,7 +255,7 @@ pub fn uci_loop() {
                 println!("id name Vesper {}", VERSION);
                 println!("id author Redux");
                 println!("option name Threads type spin default 1 min 1 max 16");
-                println!("option name Hash type spin default 64 min 1 max 1024");
+                println!("option name Hash type spin default 64 min 1 max 2048");
                 println!("option name UseNNUE type check default true");
                 println!("uciok");
             }
@@ -276,7 +276,7 @@ pub fn uci_loop() {
                         stop_flag.store(false, Ordering::Relaxed);
 
                         if let Ok(n) = rest[vi + 1..].join(" ").parse::<usize>() {
-                            tt = Arc::new(TranspositionTable::new(n.max(1).min(1024)));
+                            tt = Arc::new(TranspositionTable::new(n.clamp(1, 2048)));
                         }
                     }
                     if name.eq_ignore_ascii_case("UseNNUE") {
