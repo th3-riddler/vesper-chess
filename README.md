@@ -5,7 +5,7 @@ Chess Interface ([UCI](https://chessprogramming.org/UCI)), so it can be used fro
 
 The project is intended to be a compact, readable engine that can be improved
 over time. Its implementation is organized around a bitboard chess position,
-legal move generation, static evaluation, and a time-controlled game-tree
+legal move generation, handcrafted/NNUE evaluation and a time-controlled game-tree
 search.
 
 ## Features
@@ -13,18 +13,15 @@ search.
 Vesper currently provides:
 
 - UCI input and output for integration with chess software
-- FEN position loading and standard starting-position setup
-- UCI move parsing, including promotions
-- Legal move generation for ordinary moves, captures, castling, en passant,
-  and promotion
-- Bitboard board representation and precomputed attack tables
+- [Bitboard](https://chessprogramming.org/Bitboards) board representation and precomputed attack tables
 - Incremental make/unmake move support
-- Zobrist position hashing and repetition tracking
-- Iterative deepening negamax search with alpha-beta pruning
-- Quiescence search and capture move ordering
-- A transposition table used during search
+- [Zobrist](https://chessprogramming.org/Zobrist_Hashing) position hashing and repetition tracking
+- [Iterative deepening](https://chessprogramming.org/Iterative_Deepening) negamax search with alpha-beta pruning
+- [Quiescence search](https://chessprogramming.org/Quiescence_Search) and capture [move ordering](https://chessprogramming.org/Move_Ordering)
+- A [transposition table](https://chessprogramming.org/Transposition_Table) used during search
 - A phase-aware material and piece-square evaluation
-- Perft tests for validating move generation
+- A handcrafted evaluation function tuned using the [Texel Tuning's method](https://chessprogramming.org/Texel's_Tuning_Method)
+- [Perft](https://chessprogramming.org/Perft) tests for validating move generation
 
 ## Building
 
@@ -36,12 +33,6 @@ cargo build --release
 ```
 
 The optimized executable is produced at `target/release/vesper`.
-
-For development builds, use:
-
-```text
-cargo build
-```
 
 ## Running
 
@@ -76,13 +67,12 @@ also supported. Unknown commands are ignored.
 Run the complete test suite with:
 
 ```text
-cargo test
+cargo test --release
 ```
 
 The tests cover move legality, special positions, incremental Zobrist hashing,
 and known perft results for positions such as the initial position and
-Kiwipete. Perft is especially useful when changing board or move-generation
-code, because it checks the number of legal move sequences at a given depth.
+Kiwipete.
 
 ## Development Notes
 
