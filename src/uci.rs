@@ -22,6 +22,8 @@ use crate::{
 };
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
+const MAX_THREADS: usize = 16;
+const MAX_TT_MB: usize = 2048;
 
 pub(crate) fn square_to_algebraic(square: u8) -> String {
     format!(
@@ -254,8 +256,8 @@ pub fn uci_loop() {
             Some("uci") => {
                 println!("id name Vesper {}", VERSION);
                 println!("id author Redux");
-                println!("option name Threads type spin default 1 min 1 max 16");
-                println!("option name Hash type spin default 64 min 1 max 2048");
+                println!("option name Threads type spin default 1 min 1 max {}", MAX_THREADS);
+                println!("option name Hash type spin default 64 min 1 max {}", MAX_TT_MB);
                 println!("option name UseNNUE type check default true");
                 println!("uciok");
             }
@@ -265,7 +267,7 @@ pub fn uci_loop() {
                     let name: String = rest[ni + 1..vi].join(" ");
                     if name.eq_ignore_ascii_case("Threads") {
                         if let Ok(n) = rest[vi + 1..].join(" ").parse::<usize>() {
-                            num_threads.store(n.max(1).min(16), Ordering::Relaxed);
+                            num_threads.store(n.clamp(1, MAX_THREADS), Ordering::Relaxed);
                         }
                     }
                     if name.eq_ignore_ascii_case("Hash") {
@@ -276,7 +278,7 @@ pub fn uci_loop() {
                         stop_flag.store(false, Ordering::Relaxed);
 
                         if let Ok(n) = rest[vi + 1..].join(" ").parse::<usize>() {
-                            tt = Arc::new(TranspositionTable::new(n.clamp(1, 2048)));
+                            tt = Arc::new(TranspositionTable::new(n.clamp(1, MAX_TT_MB)));
                         }
                     }
                     if name.eq_ignore_ascii_case("UseNNUE") {
